@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const vk = @import("vulkan");
-const glfw = @import("mach_glfw");
+const glfw = @import("mach-glfw");
 const Allocator = std.mem.Allocator;
 
 const required_device_extensions = [_][*:0]const u8{
