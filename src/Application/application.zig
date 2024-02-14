@@ -1,6 +1,7 @@
 const std = @import("std");
 const glfw = @import("mach-glfw");
 const vk = @import("vulkan");
+const Scene = @import("../Scene/scene.zig").Scene;
 const GameWindow = @import("game_window.zig").GameWindow;
 
 const Allocator = std.mem.Allocator;
