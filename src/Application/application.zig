@@ -9,34 +9,23 @@ pub const Application = struct {
     const Self = @This();
 
     allocator: Allocator,
-    window: glfw.Window,
+    game_window: GameWindow,
 
     pub fn init(allocator: Allocator, app_name: [:0]const u8, width: u32, height: u32) !Self {
-        if (!glfw.init(.{})) {
-            std.log.err("Failed to init GLFW: {?s}", .{glfw.getErrorString()});
-            std.process.exit(1);
-        }
-
-        const window = glfw.Window.create(width, height, app_name, null, null, .{
-            .client_api = .no_api,
-        }) orelse {
-            std.log.err("Failed to create window: {?s}", .{glfw.getErrorString()});
-            return error.GLFWWindowCreationFailed;
-        };
+        const game_window = try GameWindow.init(allocator, app_name, width, height);
 
         return Self{ 
             .allocator = allocator, 
-            .window = window,
+            .game_window = game_window,
         };
     }
 
     pub fn deinit(self: *Application) void {
-        defer glfw.terminate();
-        defer self.window.destroy();
+        self.game_window.deinit();
     }
 
     pub fn run(self: *Application) void {
-        while (!self.window.shouldClose()) {
+        while (!self.game_window.shouldClose()) {
             glfw.pollEvents();
         }
     }

@@ -2,9 +2,12 @@ const std = @import("std");
 const glfw = @import("mach-glfw");
 const vk = @import("vulkan");
 
+const Allocator = std.mem.Allocator;
+
 pub const GameWindow = struct {
     const Self = @This();
 
+    allocator: Allocator,
     window_width: u32 = 1200,
     window_height: u32 = 900,
     app_name: [:0]const u8 = "Vulkan Application",
@@ -15,8 +18,8 @@ pub const GameWindow = struct {
         std.log.err("glfw: {}: {s}\n", .{ error_code, description });
     }
 
-    pub fn init(app_name: [:0]const u8, width: u32, height: u32) !Self {
-        //glfw.setErrorCallback(errorCallback);
+    pub fn init(allocator: Allocator, app_name: [:0]const u8, width: u32, height: u32) !Self {
+        glfw.setErrorCallback(errorCallback);
 
         if (!glfw.init(.{})) {
             std.log.err("Failed to init GLFW: {?s}", .{glfw.getErrorString()});
@@ -31,6 +34,7 @@ pub const GameWindow = struct {
         };
 
         return Self{
+            .allocator = allocator,
             .window_width = width,
             .window_height = height,
             .app_name = app_name,
@@ -38,8 +42,9 @@ pub const GameWindow = struct {
         };
     }
 
-    pub fn deinit() void {
+    pub fn deinit(self: *GameWindow) void {
         defer glfw.terminate();
+        defer self.window.destroy();
     }
 
     /// Default GLFW error handling callback
