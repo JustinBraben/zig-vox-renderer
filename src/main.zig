@@ -3,6 +3,7 @@ const vk = @import("vulkan");
 const glfw = @import("mach-glfw");
 const GraphicsContext = @import("graphics_context.zig").GraphicsContext;
 const Swapchain = @import("swapchain.zig").Swapchain;
+const Vertex = @import("Rendering/vertex.zig").Vertex;
 const triangle_vert = @embedFile("triangle_vert");
 const triangle_frag = @embedFile("triangle_frag");
 const Allocator = std.mem.Allocator;
@@ -10,32 +11,6 @@ const Allocator = std.mem.Allocator;
 const Application = @import("Application/application.zig").Application;
 
 const app_name = "mach-glfw + vulkan-zig = triangle";
-
-const Vertex = struct {
-    const binding_description = vk.VertexInputBindingDescription{
-        .binding = 0,
-        .stride = @sizeOf(Vertex),
-        .input_rate = .vertex,
-    };
-
-    const attribute_description = [_]vk.VertexInputAttributeDescription{
-        .{
-            .binding = 0,
-            .location = 0,
-            .format = .r32g32_sfloat,
-            .offset = @offsetOf(Vertex, "pos"),
-        },
-        .{
-            .binding = 0,
-            .location = 1,
-            .format = .r32g32b32_sfloat,
-            .offset = @offsetOf(Vertex, "color"),
-        },
-    };
-
-    pos: [2]f32,
-    color: [3]f32,
-};
 
 const vertices = [_]Vertex{
     .{ .pos = .{ 0, -0.5 }, .color = .{ 1, 0, 0 } },

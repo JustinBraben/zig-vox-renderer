@@ -3,6 +3,9 @@ const glfw = @import("mach-glfw");
 const vk = @import("vulkan");
 const GraphicsContext = @import("../Rendering/graphics_context.zig").GraphicsContext;
 const Swapchain = @import("../Rendering/swapchain.zig").Swapchain;
+const RenderPass = @import("../Rendering/render_pass.zig");
+const Pipeline = @import("../Rendering/pipeline.zig");
+const FrameBuffers = @import("../Rendering/framebuffers.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -15,9 +18,14 @@ pub const GameWindow = struct {
     app_name: [:0]const u8 = "Vulkan Application",
     window: glfw.Window = undefined,
     gc: GraphicsContext = undefined,
-    //swapchain: Swapchain = undefined,
+    // swapchain: Swapchain = undefined,
+    // pipeline_layout: vk.PipelineLayout = undefined,
+    // render_pass: vk.RenderPass = undefined,
+    // pipeline: vk.Pipeline = undefined,
+    // framebuffers: anyerror![]vk.Framebuffer,
 
     pub fn init(allocator: Allocator, app_name: [:0]const u8, width: u32, height: u32) !Self {
+        var game_window: Self = undefined;
         if (!glfw.init(.{})) {
             std.log.err("Failed to init GLFW: {?s}", .{glfw.getErrorString()});
             std.process.exit(1);
@@ -37,18 +45,42 @@ pub const GameWindow = struct {
 
         std.debug.print("Using device: {?s}\n", .{gc.props.device_name});
 
-        // var swapchain: Swapchain = undefined;
-        // swapchain = try Swapchain.init(&gc, allocator, extent);
-        // defer swapchain.deinit();
+        game_window.gc = gc;
 
-        var game_window: Self = .{
+        // var swapchain: Swapchain = undefined;
+        // swapchain = try Swapchain.init(&game_window.gc, allocator, extent);
+
+        // const pipeline_layout = try game_window.gc.vkd.createPipelineLayout(game_window.gc.dev, &.{
+        //     .flags = .{},
+        //     .set_layout_count = 0,
+        //     .p_set_layouts = undefined,
+        //     .push_constant_range_count = 0,
+        //     .p_push_constant_ranges = undefined,
+        // }, null);
+        // defer gc.vkd.destroyPipelineLayout(gc.dev, pipeline_layout, null);
+
+        // const render_pass = try RenderPass.create(&game_window.gc, swapchain);
+        // defer gc.vkd.destroyRenderPass(gc.dev, render_pass, null);
+
+        // const pipeline = try Pipeline.create(&game_window.gc, pipeline_layout, render_pass);
+        // defer gc.vkd.destroyPipeline(gc.dev, pipeline, null);
+
+        // var frame_buffers: []vk.Framebuffer = undefined;
+        // frame_buffers = try FrameBuffers.create(&game_window.gc, allocator, render_pass, swapchain);
+        // defer FrameBuffers.destroy(&gc, allocator, framebuffers);
+
+        game_window = .{
             .allocator = allocator,
             .window_width = width,
             .window_height = height,
             .app_name = app_name,
             .window = window,
-            .gc = gc,
-            //.swapchain = swapchain,
+            .gc = game_window.gc,
+            // .swapchain = swapchain,
+            // .pipeline_layout = pipeline_layout,
+            // .render_pass = render_pass,
+            // .pipeline = pipeline,
+            // .framebuffers = frame_buffers,
         };
 
         game_window.setupCallbacks();
@@ -60,6 +92,11 @@ pub const GameWindow = struct {
         defer glfw.terminate();
         defer self.window.destroy();
         defer self.gc.deinit();
+        // defer self.swapchain.deinit();
+        // defer self.gc.vkd.destroyPipelineLayout(self.gc.dev, self.pipeline_layout, null);
+        // defer self.gc.vkd.destroyRenderPass(self.gc.dev, self.render_pass, null);
+        // defer self.gc.vkd.destroyPipeline(self.gc.dev, self.pipeline, null);
+        // defer FrameBuffers.destroy(self.gc, self.allocator, self.framebuffers);
     }
 
     /// Default GLFW error handling callback
