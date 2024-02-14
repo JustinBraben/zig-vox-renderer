@@ -7,6 +7,8 @@ const triangle_vert = @embedFile("triangle_vert");
 const triangle_frag = @embedFile("triangle_frag");
 const Allocator = std.mem.Allocator;
 
+const Application = @import("Application/application.zig").Application;
+
 const app_name = "mach-glfw + vulkan-zig = triangle";
 
 const Vertex = struct {
