@@ -3,18 +3,20 @@ const glfw = @import("mach-glfw");
 const vk = @import("vulkan");
 
 pub const GameWindow = struct {
+    const Self = @This();
+
     window_width: u32 = 1200,
     window_height: u32 = 900,
     app_name: [:0]const u8 = "Vulkan Application",
-    window: *glfw.Window = undefined,
+    window: glfw.Window,
 
     /// Default GLFW error handling callback
     fn errorCallback(error_code: glfw.ErrorCode, description: [:0]const u8) void {
         std.log.err("glfw: {}: {s}\n", .{ error_code, description });
     }
 
-    pub fn init(self: *GameWindow, app_name: [*:0]const u8, width: u32, height: u32) !void {
-        glfw.setErrorCallback(errorCallback);
+    pub fn init(app_name: [:0]const u8, width: u32, height: u32) !Self {
+        //glfw.setErrorCallback(errorCallback);
 
         if (!glfw.init(.{})) {
             std.log.err("Failed to init GLFW: {?s}", .{glfw.getErrorString()});
@@ -25,15 +27,19 @@ pub const GameWindow = struct {
             .client_api = .no_api,
         }) orelse {
             std.log.err("Failed to create window: {?s}", .{glfw.getErrorString()});
-            std.process.exit(1);
+            return error.GLFWWindowCreationFailed;
         };
 
-        self.window = window;
+        return Self{
+            .window_width = width,
+            .window_height = height,
+            .app_name = app_name,
+            .window = window,
+        };
     }
 
-    pub fn deinit(self: *GameWindow) void {
+    pub fn deinit() void {
         defer glfw.terminate();
-        defer self.window.destroy();
     }
 
     /// Default GLFW error handling callback
@@ -59,11 +65,12 @@ pub const GameWindow = struct {
         return self.window.isValid();
     }
 
-    fn shouldClose(self: *GameWindow) bool {
+    pub fn shouldClose(self: *GameWindow) bool {
         return self.window.shouldClose();
     }
 
-    fn pollEvents() void {
+    pub fn pollEvents(self: *GameWindow) void {
+        std.debug.print("Gamewindow width is: {}\n", .{self.window_width});
         glfw.pollEvents();
     }
 };
