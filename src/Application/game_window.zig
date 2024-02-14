@@ -25,7 +25,6 @@ pub const GameWindow = struct {
     // framebuffers: anyerror![]vk.Framebuffer,
 
     pub fn init(allocator: Allocator, app_name: [:0]const u8, width: u32, height: u32) !Self {
-        var game_window: Self = undefined;
         if (!glfw.init(.{})) {
             std.log.err("Failed to init GLFW: {?s}", .{glfw.getErrorString()});
             std.process.exit(1);
@@ -45,10 +44,8 @@ pub const GameWindow = struct {
 
         std.debug.print("Using device: {?s}\n", .{gc.props.device_name});
 
-        game_window.gc = gc;
-
         // var swapchain: Swapchain = undefined;
-        // swapchain = try Swapchain.init(&game_window.gc, allocator, extent);
+        // swapchain = try Swapchain.init(&gc, allocator, extent);
 
         // const pipeline_layout = try game_window.gc.vkd.createPipelineLayout(game_window.gc.dev, &.{
         //     .flags = .{},
@@ -69,13 +66,13 @@ pub const GameWindow = struct {
         // frame_buffers = try FrameBuffers.create(&game_window.gc, allocator, render_pass, swapchain);
         // defer FrameBuffers.destroy(&gc, allocator, framebuffers);
 
-        game_window = .{
+        var game_window = Self{
             .allocator = allocator,
             .window_width = width,
             .window_height = height,
             .app_name = app_name,
             .window = window,
-            .gc = game_window.gc,
+            .gc = gc,
             // .swapchain = swapchain,
             // .pipeline_layout = pipeline_layout,
             // .render_pass = render_pass,

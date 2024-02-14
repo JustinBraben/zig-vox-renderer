@@ -97,6 +97,7 @@ pub const Swapchain = struct {
     }
 
     fn deinitExceptSwapchain(self: Swapchain) void {
+        std.debug.print("Deinitializing images in swapchain\n", .{});
         for (self.swap_images) |si| si.deinit(self.gc);
         self.gc.vkd.destroySemaphore(self.gc.dev, self.next_image_acquired, null);
     }
@@ -107,6 +108,8 @@ pub const Swapchain = struct {
 
     pub fn deinit(self: Swapchain) void {
         self.deinitExceptSwapchain();
+
+        std.debug.print("Destroying SwapChainKHR\n", .{});
         self.gc.vkd.destroySwapchainKHR(self.gc.dev, self.handle, null);
     }
 

@@ -33,6 +33,9 @@ pub const Application = struct {
             self.game_window.pollEvents();
             self.updateAndRender();
         }
+
+        std.debug.print("Waiting for all fences to be signaled\n", .{});
+        //try self.game_window.swapchain.waitForAllFences();
     }
 
     fn updateAndRender(self: *Application) void {
