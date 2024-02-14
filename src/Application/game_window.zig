@@ -13,14 +13,7 @@ pub const GameWindow = struct {
     app_name: [:0]const u8 = "Vulkan Application",
     window: glfw.Window,
 
-    /// Default GLFW error handling callback
-    fn errorCallback(error_code: glfw.ErrorCode, description: [:0]const u8) void {
-        std.log.err("glfw: {}: {s}\n", .{ error_code, description });
-    }
-
     pub fn init(allocator: Allocator, app_name: [:0]const u8, width: u32, height: u32) !Self {
-        glfw.setErrorCallback(errorCallback);
-
         if (!glfw.init(.{})) {
             std.log.err("Failed to init GLFW: {?s}", .{glfw.getErrorString()});
             std.process.exit(1);
@@ -33,13 +26,17 @@ pub const GameWindow = struct {
             return error.GLFWWindowCreationFailed;
         };
 
-        return Self{
+        var game_window: Self = .{
             .allocator = allocator,
             .window_width = width,
             .window_height = height,
             .app_name = app_name,
             .window = window,
         };
+
+        game_window.setupCallbacks();
+
+        return game_window;
     }
 
     pub fn deinit(self: *GameWindow) void {
@@ -57,13 +54,31 @@ pub const GameWindow = struct {
         _ = codepoint;
     }
 
+    fn onMouseButtonEvent(window: glfw.Window, button: glfw.MouseButton, action: glfw.Action, mods: glfw.Mods) void {
+        _ = window;
+        _ = button;
+        _ = action;
+        _ = mods;
+    }
+
+    fn onCursorPosition(window: glfw.Window, xpos: f64, ypos: f64) void {
+        _ = window;
+        _ = xpos;
+        _ = ypos;
+    }
+
+    fn onResized(window: glfw.Window, width: u32, height: u32) void {
+        _ = window;
+        _ = width;
+        _ = height;
+    }
+
     fn setupCallbacks(self: *GameWindow) void {
-        glfw.setErrorCallback(errorCallback);
+        glfw.setErrorCallback(onWindowError);
         self.window.setCharCallback(onKeyEvent);
-        // self.window.setKeyCallback(keyCallback);
-        // self.window.setMouseButtonCallback(mouseButtonCallback);
-        // self.window.setCursorPosCallback(cursorPosCallback);
-        // self.window.setScrollCallback(scrollCallback);
+        self.window.setMouseButtonCallback(onMouseButtonEvent);
+        self.window.setCursorPosCallback(onCursorPosition);
+        self.window.setFramebufferSizeCallback(onResized);
     }
 
     fn isValid(self: *GameWindow) bool {
@@ -75,7 +90,38 @@ pub const GameWindow = struct {
     }
 
     pub fn pollEvents(self: *GameWindow) void {
-        std.debug.print("Gamewindow width is: {}\n", .{self.window_width});
+        _ = self;
         glfw.pollEvents();
+    }
+
+    pub fn shouldRender(self: *GameWindow) bool {
+        return self.window_width > 0 and self.window_height > 0;
+    }
+
+    pub fn beginFrame(self: *GameWindow) void {
+        // TODO: Ensure framebufferStack is empty
+        self.resetFrame();
+        
+        // TODO: create framebuffer
+
+        // TODO: push framebuffer to framebufferStack
+        self.resetFrame();
+    }
+
+    pub fn resetFrame(self: *GameWindow) void {
+        _ = self;
+    }
+
+    pub fn finalizeFrame(self: *GameWindow) void {
+        _ = self;
+        // TODO: ensure framebufferStack is size 1
+
+        // ColorRenderPass.renderTexture(framebufferStack.pop().getColorAttachment(0));
+    }
+
+    pub fn swapBuffers(self: *GameWindow) void {
+        _ = self;
+        // TODO: Clear Intermediate Texture References
+        // Will need to do this the vulkan way
     }
 };
