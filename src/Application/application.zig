@@ -58,4 +58,33 @@ pub const Application = struct {
             self.game_window.swapBuffers();
         }
     }
+
+    fn onKeyEvent(window: glfw.Window, codepoint: u21) void {
+        //self.scene.onKeyEvent(window, codepoint);
+        _ = window;
+        _ = codepoint;
+    }
+
+    fn onMouseButtonEvent(window: glfw.Window, button: glfw.MouseButton, action: glfw.Action, mods: glfw.Mods) void {
+        _ = window;
+        _ = button;
+        _ = action;
+        _ = mods;
+    }
+
+    fn onCursorPositionEvent(window: glfw.Window, xpos: f64, ypos: f64) void {
+        _ = window;
+        _ = xpos;
+        _ = ypos;
+    }
+
+    fn onResizedEvent(window: glfw.Window, width: u32, height: u32) void {
+        _ = window;
+        _ = width;
+        _ = height;
+    }
+
+    fn onRefreshWindowEvent(self: *Application) void {
+        self.updateAndRender();
+    }
 };

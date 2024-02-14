@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const vk = @import("vulkan");
 const glfw = @import("mach-glfw");
 const Dispatch = @import("dispatch.zig");
+const GraphicsQueue = @import("graphics_queue.zig").GraphicsQueue;
 const Allocator = std.mem.Allocator;
 
 const required_device_extensions = [_][*:0]const u8{
@@ -31,8 +32,8 @@ pub const GraphicsContext = struct {
     mem_props: vk.PhysicalDeviceMemoryProperties,
 
     dev: vk.Device,
-    graphics_queue: Queue,
-    present_queue: Queue,
+    graphics_queue: GraphicsQueue,
+    present_queue: GraphicsQueue,
 
     pub fn init(allocator: Allocator, app_name: [*:0]const u8, window: glfw.Window) !GraphicsContext {
         var self: GraphicsContext = undefined;
@@ -99,8 +100,8 @@ pub const GraphicsContext = struct {
         self.vkd = try Device.load(self.dev, self.vki.dispatch.vkGetDeviceProcAddr);
         errdefer self.vkd.destroyDevice(self.dev, null);
 
-        self.graphics_queue = Queue.init(self.vkd, self.dev, candidate.queues.graphics_family);
-        self.present_queue = Queue.init(self.vkd, self.dev, candidate.queues.present_family);
+        self.graphics_queue = GraphicsQueue.init(self.vkd, self.dev, candidate.queues.graphics_family);
+        self.present_queue = GraphicsQueue.init(self.vkd, self.dev, candidate.queues.present_family);
 
         self.mem_props = self.vki.getPhysicalDeviceMemoryProperties(self.pdev);
 
@@ -133,18 +134,6 @@ pub const GraphicsContext = struct {
             .allocation_size = requirements.size,
             .memory_type_index = try self.findMemoryTypeIndex(requirements.memory_type_bits, flags),
         }, null);
-    }
-};
-
-pub const Queue = struct {
-    handle: vk.Queue,
-    family: u32,
-
-    fn init(vkd: Device, dev: vk.Device, family: u32) Queue {
-        return .{
-            .handle = vkd.getDeviceQueue(dev, family, 0),
-            .family = family,
-        };
     }
 };
 

@@ -3,13 +3,13 @@ const vk = @import("vulkan");
 
 /// Wrappers for Vulkan API functions.
 
-const Base = vk.BaseWrapper(.{
+pub const Base = vk.BaseWrapper(.{
     .createInstance = true,
     .enumerateInstanceExtensionProperties = true,
     .getInstanceProcAddr = true,
 });
 
-const Instance = vk.InstanceWrapper(.{
+pub const Instance = vk.InstanceWrapper(.{
     .destroyInstance = true,
     .createDevice = true,
     .destroySurfaceKHR = true,
@@ -25,7 +25,7 @@ const Instance = vk.InstanceWrapper(.{
     .getDeviceProcAddr = true,
 });
 
-const Device = vk.DeviceWrapper(.{
+pub const Device = vk.DeviceWrapper(.{
     .destroyDevice = true,
     .getDeviceQueue = true,
     .createSemaphore = true,
