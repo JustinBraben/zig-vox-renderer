@@ -3,6 +3,8 @@ const glfw = @import("mach-glfw");
 const gl = @import("gl");
 const Allocator = std.mem.Allocator;
 
+const FramebufferStack = @import("../Rendering/frame_buffer_stack.zig").FramebufferStack;
+
 const log = std.log.scoped(.Window);
 
 pub const Window = struct {
