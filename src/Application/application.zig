@@ -22,6 +22,21 @@ pub const Application = struct {
     pub fn run(self: *Self) void {
         while (!self.window.shouldClose()){
             self.window.pollEvents();
+            self.updateAndRender();
+        }
+
+        log.info("Window now closing...\n", .{});
+    }
+
+    fn updateAndRender(self: *Self) void {
+        if (self.window.shouldRender()) {
+            self.window.beginFrame();
+            // TODO: render scene
+            self.window.finalizeFrame();
+
+            // TODO: render GUI
+
+            self.window.swapBuffers();
         }
     }
 };

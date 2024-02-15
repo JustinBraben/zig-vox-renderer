@@ -1,5 +1,6 @@
 const std = @import("std");
 const glfw = @import("mach-glfw");
+const gl = @import("gl");
 const Allocator = std.mem.Allocator;
 
 const log = std.log.scoped(.Window);
@@ -12,6 +13,7 @@ pub const Window = struct {
     width: u32,
     height: u32,
     window: glfw.Window,
+    process: glfw.GLProc = undefined,
 
     pub fn init(allocator: Allocator, app_name: [:0]const u8, width: u32, height: u32) !Self {
         if (!glfw.init(.{})) {
@@ -20,11 +22,18 @@ pub const Window = struct {
         }
 
         const window = glfw.Window.create( width, height, app_name, null, null, .{
-            .client_api = .opengl_api
+            .opengl_profile = .opengl_core_profile,
+            .context_version_major = 4,
+            .context_version_minor = 0,
         }) orelse {
             std.log.err("Failed to create window: {?s}\n", .{glfw.getErrorString()});
             return error.GLFWWindowCreateFailed;
         };
+
+        glfw.makeContextCurrent(window);
+
+        const proc: glfw.GLProc = undefined;
+        try gl.load(proc, glGetProcAddress);
 
         var self: Self = .{
             .allocator = allocator,
@@ -32,6 +41,7 @@ pub const Window = struct {
             .width = width,
             .height = height,
             .window = window,
+            .process = proc,
         };
 
         self.setupCallbacks();
@@ -44,13 +54,9 @@ pub const Window = struct {
         defer self.window.destroy();
     }
 
-    pub fn shouldClose(self: *Self) bool {
-        return self.window.shouldClose();
-    }
-
-    pub fn pollEvents(self: *Self) void {
-        _ = self;
-        glfw.pollEvents();
+    fn glGetProcAddress(p: glfw.GLProc, proc: [:0]const u8) ?gl.FunctionPointer {
+        _ = p;
+        return glfw.getProcAddress(proc);
     }
 
     /// Default GLFW error handling callback
@@ -115,5 +121,42 @@ pub const Window = struct {
 
         // TODO: use this for text input when needed
         //self.window.setCharCallback(onKeyEvent);
+    }
+
+    pub fn shouldClose(self: *Self) bool {
+        return self.window.shouldClose();
+    }
+
+    pub fn pollEvents(self: *Self) void {
+        _ = self;
+        glfw.pollEvents();
+    }
+
+    pub fn shouldRender(self: *Self) bool {
+        return self.width > 0 and self.height > 0;
+    }
+
+    pub fn beginFrame(self: *Self) void {
+        self.resetFrame();
+    }
+
+    pub fn resetFrame(self: *Self) void {
+        const window_width = @as(gl.GLsizei, @intCast(self.window.getSize().width));
+        const window_height = @as(gl.GLsizei, @intCast(self.window.getSize().height));
+        gl.viewport(0, 0, window_width, window_height);
+        gl.clearColor(0, 0, 0, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
+    }
+
+    pub fn finalizeFrame(self: *Self) void {
+        _ = self;
+        
+        // TODO: assert framebuffer is size 1
+        // then render texture, and pop framebufferstack
+    }
+
+    pub fn swapBuffers(self: *Self) void {
+        // TODO: clear intermediate texture references in framebufferstack
+        self.window.swapBuffers();
     }
 };
