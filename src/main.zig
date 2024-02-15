@@ -9,6 +9,7 @@ const triangle_frag = @embedFile("triangle_frag");
 const Allocator = std.mem.Allocator;
 
 const Application = @import("Application/application.zig").Application;
+const FirstApp = @import("Application/first_app.zig").FirstApp;
 
 const app_name = "mach-glfw + vulkan-zig = triangle";
 
@@ -152,8 +153,10 @@ pub fn main() !void {
         @panic("Leaked memory");
     };
 
-    var app = try Application.init(gpa.allocator(), app_name, 1200, 900);
+    var app = try FirstApp.init(gpa.allocator(), app_name, 1200, 900);
     defer app.deinit();
+
+    std.debug.print("{s}\n", .{triangle_vert});
 
     app.run();
 }
