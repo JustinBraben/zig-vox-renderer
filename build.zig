@@ -24,6 +24,12 @@ pub fn build(b: *std.Build) !void {
         }
     });
 
+    exe.root_module.addAnonymousImport("ziglm", .{
+        .root_source_file = .{
+            .path = "libs/ziglm/src/ziglm.zig",
+        }
+    });
+
     // Use pre-generated Vulkan bindings.
     const vulkan_dep = b.dependency("vulkan-zig-generated", .{});
     exe.root_module.addImport("vulkan", vulkan_dep.module("vulkan-zig-generated"));

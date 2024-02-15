@@ -119,8 +119,18 @@ pub const Window = struct {
         self.window.setFramebufferSizeCallback(onResizedEvent);
         self.window.setRefreshCallback(onRefreshWindowEvent);
 
+        glfw.swapInterval(1); // vsync
+
         // TODO: use this for text input when needed
         //self.window.setCharCallback(onKeyEvent);
+    }
+
+    pub fn lockMouse(self: *Self) void {
+        self.window.setInputModeCursor(.disabled);
+    }
+
+    pub fn unlockMouse(self: *Self) void {
+        self.window.setInputModeCursor(.normal);
     }
 
     pub fn shouldClose(self: *Self) bool {
@@ -133,7 +143,7 @@ pub const Window = struct {
     }
 
     pub fn shouldRender(self: *Self) bool {
-        return self.width > 0 and self.height > 0;
+        return self.window.getSize().width > 0 and self.window.getSize().height > 0;
     }
 
     pub fn beginFrame(self: *Self) void {
