@@ -89,6 +89,7 @@ fn errorCallback(error_code: glfw.ErrorCode, description: [:0]const u8) void {
 //         .p_queue_family_indices = undefined,
 //     }, null);
 //     defer gc.vkd.destroyBuffer(gc.dev, buffer, null);
+
 //     const mem_reqs = gc.vkd.getBufferMemoryRequirements(gc.dev, buffer);
 //     const memory = try gc.allocate(mem_reqs, .{ .device_local_bit = true });
 //     defer gc.vkd.freeMemory(gc.dev, memory, null);
