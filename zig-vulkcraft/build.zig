@@ -18,12 +18,6 @@ pub fn build(b: *std.Build) !void {
     });
     exe.root_module.addImport("mach-glfw", mach_glfw_dep.module("mach-glfw"));
 
-    exe.root_module.addAnonymousImport("gl", .{
-        .root_source_file = .{
-            .path = "libs/gl41.zig",
-        }
-    });
-
     // Use pre-generated Vulkan bindings.
     const vulkan_dep = b.dependency("vulkan-zig-generated", .{});
     exe.root_module.addImport("vulkan", vulkan_dep.module("vulkan-zig-generated"));
