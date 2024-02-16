@@ -9,13 +9,22 @@ pub const Application = struct {
     const Self = @This();
 
     allocator: Allocator,
+    timer: std.time.Timer,
+    last_tick: u64,
+
     window: Window,
     scene: *Scene,
 
     pub fn init(allocator: Allocator, appName: [:0]const u8, width: u32, height: u32) !Self {
         const window = try Window.init(allocator, appName, width, height);
         var scene = try Scene.init(allocator, "save_path");
-        return Self{ .allocator = allocator, .window = window, .scene = &scene};
+        return Self{ 
+            .allocator = allocator, 
+            .timer = try std.time.Timer.start(),
+            .last_tick = 0,
+            .window = window, 
+            .scene = &scene
+        };
     }
 
     pub fn deinit(self: *Self) void {
@@ -23,6 +32,8 @@ pub const Application = struct {
     }
 
     pub fn run(self: *Self) void {
+        self.last_tick = self.timer.lap();
+        log.info("first lap of run: {}\n", .{self.last_tick});
         while (!self.window.shouldClose()){
             self.window.pollEvents();
             self.updateAndRender();
@@ -36,6 +47,12 @@ pub const Application = struct {
     }
 
     fn updateAndRender(self: *Self) void {
+        self.last_tick = self.timer.lap();
+
+        // log.info("lap of updateAndRender: {}\n", .{self.last_tick});
+        const delta_time = @as(f32, @floatFromInt(self.last_tick)) / 100_000_000.0;
+        self.scene.update(delta_time);
+
         if (self.window.shouldRender()) {
             self.window.beginFrame();
             // TODO: render scene
