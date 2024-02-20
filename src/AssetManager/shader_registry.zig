@@ -1,0 +1,3 @@
+pub const ShaderRegistry = struct {
+    
+};

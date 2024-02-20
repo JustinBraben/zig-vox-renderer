@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const glm = @import("ziglm");
 const Texture = @import("../Rendering/texture.zig").Texture;
 const Persistence = @import("../Persistence/persistence.zig").Persistance;
+const Skybox = @import("skybox.zig").Skybox;
 
 const Mat4x4 = glm.Mat4x4;
 
@@ -12,6 +13,8 @@ pub const Scene = struct {
     allocator: Allocator,
 
     persistence: *Persistence,
+
+    skybox: Skybox,
 
     z_near: f32 = 0.1,
     z_far: f32 = 1000.0,
@@ -23,6 +26,7 @@ pub const Scene = struct {
         return Self{
             .allocator = allocator,
             .persistence = &persistence,
+            .skybox = try Skybox.init(allocator),
             .z_near = 0.1,
             .z_far = 1000.0,
             .projection_matrix = Mat4x4(f32).as(1),
