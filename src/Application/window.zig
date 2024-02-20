@@ -149,7 +149,14 @@ pub const Window = struct {
     }
 
     pub fn beginFrame(self: *Self) void {
+        // TODO: asset framebuffer is empty
+        // then reset frame
         self.resetFrame();
+
+        // TODO: create a framebuffer, make sure it is not as wide as the window, or as tall as the window
+
+        // TODO: push framebuffer onto framebufferstack
+        // then reset the level one framebuffer
     }
 
     pub fn resetFrame(self: *Self) void {

@@ -54,8 +54,8 @@ pub const Application = struct {
         self.scene.update(delta_time);
 
         if (self.window.shouldRender()) {
-            self.window.beginFrame();
             // TODO: render scene
+            self.window.beginFrame();
             self.scene.render();
             self.window.finalizeFrame();
 
