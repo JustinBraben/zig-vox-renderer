@@ -42,6 +42,8 @@ pub const Scene = struct {
         // TODO: update world
 
         // TODO: update skybox
+        const camera = Mat4x4(f32).as(1);
+        self.skybox.update(self.projection_matrix, camera, deltaTime);
     }
 
     pub fn render(self: *const Self) void {

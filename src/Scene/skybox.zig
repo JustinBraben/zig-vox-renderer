@@ -26,9 +26,11 @@ pub const Skybox = struct {
         };
     }
 
-    pub fn update(self: *Self, deltaTime: f32) void {
+    pub fn update(self: *Self, projection: Mat4x4(f32), cameraView: Mat4x4(f32),  deltaTime: f32) void {
+        _ = projection;
+        _ = cameraView;
         self.rotation += self.rotation_speed * deltaTime;
-        self.transform = Mat4x4(f32).rotate_y(self.rotation);
+        // self.transform = projection * glm.Mat4(glm.Mat3(cameraView));
     }
 
     pub fn render(self: *Self) void {
