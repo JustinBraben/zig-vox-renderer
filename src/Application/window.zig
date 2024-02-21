@@ -91,9 +91,9 @@ pub const Window = struct {
         }
         if (action == glfw.Action.release) {
             // Debug print
-            std.debug.print("Released mouse button : {}\n", .{button});
+            const cursor_pos = window.getCursorPos();
+            std.debug.print("Released mouse button : {} , at x: {}, y: {}\n", .{button, cursor_pos.xpos, cursor_pos.ypos});
         }
-        _ = window;
         _ = mods;
     }
 
