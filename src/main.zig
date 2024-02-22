@@ -1,10 +1,36 @@
 const std = @import("std");
 const core = @import("mach-core");
 const gpu = core.gpu;
+const ecs = @import("mach-ecs");
+const EntityID = ecs.EntityID;
 const zm = @import("zmath.zig");
 const zigimg = @import("zigimg");
 const Vertex = @import("cube_mesh.zig").Vertex;
 const vertices = @import("cube_mesh.zig").vertices;
+
+const Rotation = struct {
+    x: f32 = 0,
+    y: f32 = 0,
+    z: f32 = 0,
+};
+
+const Input = struct {
+    up: bool = false,
+    down: bool = false,
+    left: bool = false,
+    right: bool = false,
+};
+
+const all_components = .{
+        .entity = struct {
+            pub const id = EntityID;
+        },
+        .game = struct {
+            pub const rotation = Rotation;
+            pub const name = []const u8;
+            pub const input = Input;
+        },
+    };
 
 pub const App = @This();
 
@@ -25,11 +51,14 @@ orientation_x: f32,
 orientation_y: f32,
 orientation_z: f32,
 orientation: zm.Mat,
+world: ecs.Entities(all_components),
 
 // const sample_count = 4;
 
 pub fn init(app: *App) !void {
     try core.init(.{});
+    
+    app.world = try ecs.Entities(all_components).init(gpa.allocator());
 
     const shader_module = core.device.createShaderModuleWGSL("shader.wgsl", @embedFile("shader.wgsl"));
     // defer shader_module.release();
@@ -119,6 +148,11 @@ pub fn init(app: *App) !void {
     app.orientation_z = 0.0;
     app.orientation = zm.mul(zm.rotationX((std.math.pi / 2.0)), zm.rotationZ((std.math.pi / 2.0)));
 
+    const cube1 = try app.world.new();
+    try app.world.setComponent(cube1, .game, .name, "jane");
+    try app.world.setComponent(cube1, .game, .input, .{.up = false, .down = false, .left = false, .right = false});
+    try app.world.setComponent(cube1, .game, .rotation, .{.x = 0.0, .y = 0.0, .z = 0.0});
+
     shader_module.release();
     pipeline_layout.release();
     bgl.release();
@@ -127,6 +161,7 @@ pub fn init(app: *App) !void {
 pub fn deinit(app: *App) void {
     defer _ = gpa.deinit();
     defer core.deinit();
+    defer app.world.deinit();
 
     app.vertex_buffer.release();
     app.uniform_buffer.release();
@@ -139,77 +174,157 @@ pub fn update(app: *App) !bool {
     while (iter.next()) |event| {
         switch (event) {
             .key_press => |ev| {
-                if (ev.key == .escape) {
-                    return true;
+                switch (ev.key) {
+                    .escape => return true,
+                    .space => return true,
+                    .w => {
+                        var arch_iter = app.world.query(.{ .all = &.{
+                            .{ .game = &.{.input} },
+                        }});
+                        while (arch_iter.next()) |archetype| {
+                            // std.debug.print("Found entity : {any}\n", .{archetype.slice(.entity, .id)});
+                            const entity_id = (archetype.slice(.entity, .id))[0];
+                            const input_component = app.world.getComponent(entity_id, .game, .input);
+                            try app.world.setComponent(entity_id, .game, .input, .{
+                                .up = true, 
+                                .down = input_component.?.down, 
+                                .left = input_component.?.left, 
+                                .right = input_component.?.right
+                                }
+                            );
+                        }
+                        // app.orientation_y -= 0.1;
+                    },
+                    .a => {
+                        var arch_iter = app.world.query(.{ .all = &.{
+                            .{ .game = &.{.input} },
+                        }});
+                        while (arch_iter.next()) |archetype| {
+                            // std.debug.print("Found entity : {any}\n", .{archetype.slice(.entity, .id)});
+                            const entity_id = (archetype.slice(.entity, .id))[0];
+                            const input_component = app.world.getComponent(entity_id, .game, .input);
+                            try app.world.setComponent(entity_id, .game, .input, .{
+                                .up = input_component.?.up, 
+                                .down = input_component.?.down, 
+                                .left = true, 
+                                .right = input_component.?.right
+                                }
+                            );
+                        } 
+                        // app.orientation_z += 0.1;
+                    },
+                    .s => {
+                        var arch_iter = app.world.query(.{ .all = &.{
+                            .{ .game = &.{.input} },
+                        }});
+                        while (arch_iter.next()) |archetype| {
+                            // std.debug.print("Found entity : {any}\n", .{archetype.slice(.entity, .id)});
+                            const entity_id = (archetype.slice(.entity, .id))[0];
+                            const input_component = app.world.getComponent(entity_id, .game, .input);
+                            try app.world.setComponent(entity_id, .game, .input, .{
+                                .up = input_component.?.up, 
+                                .down = true, 
+                                .left = input_component.?.left,  
+                                .right = input_component.?.right
+                                }
+                            );
+                        } 
+                        // app.orientation_y += 0.1;
+                    },
+                    .d => {
+                        var arch_iter = app.world.query(.{ .all = &.{
+                            .{ .game = &.{.input} },
+                        }});
+                        while (arch_iter.next()) |archetype| {
+                            // std.debug.print("Found entity : {any}\n", .{archetype.slice(.entity, .id)});
+                            const entity_id = (archetype.slice(.entity, .id))[0];
+                            const input_component = app.world.getComponent(entity_id, .game, .input);
+                            try app.world.setComponent(entity_id, .game, .input, .{
+                                .up = input_component.?.up, 
+                                .down = input_component.?.down, 
+                                .left = input_component.?.left,  
+                                .right = true,
+                                }
+                            );
+                        }
+                        // app.orientation_z -= 0.1;
+                    },
+                    .r => {
+                        app.orientation_x = 0.0;
+                        app.orientation_y = 0.0;
+                        app.orientation_z = 0.0;
+                    },
+                    else => {},
                 }
-                if (ev.key == .space) {
-                    return true;
-                }
-                if (ev.key == .w) {
-                    app.orientation_y -= 0.1;
-                } 
-                if (ev.key == .a) {
-                    app.orientation_z += 0.1;
-                } 
-                if (ev.key == .s) {
-                    app.orientation_y += 0.1;
-                } 
-                if (ev.key == .d) {
-                    app.orientation_z -= 0.1;
-                }
-                // switch (ev.key) {
-                //     .escape => return true,
-                //     .space => return true,
-                //     .w => {
-                //         app.orientation_y -= 0.1;
-                //     },
-                //     .a => {
-                //         app.orientation_z += 0.1;
-                //     },
-                //     .s => {
-                //         app.orientation_y += 0.1;
-                //     },
-                //     .d => {
-                //         app.orientation_z -= 0.1;
-                //     },
-                //     .r => {
-                //         app.orientation_x = 0.0;
-                //         app.orientation_y = 0.0;
-                //         app.orientation_z = 0.0;
-                //     },
-                //     else => {},
-                // }
             },
-            .key_repeat => |ev| {
-                if (app.timer.read() >= 0.005) {
-                    app.timer.reset();
-                    if (ev.key == .w) {
-                        app.orientation_y -= 0.1;
-                    } 
-                    if (ev.key == .a) {
-                        app.orientation_z += 0.1;
-                    } 
-                    if (ev.key == .s) {
-                        app.orientation_y += 0.1;
-                    } 
-                    if (ev.key == .d) {
-                        app.orientation_z -= 0.1;
+            .key_release => |ev| {
+                if (ev.key == .w) {
+                    var arch_iter = app.world.query(.{ .all = &.{
+                        .{ .game = &.{.input} },
+                    }});
+                    while (arch_iter.next()) |archetype| {
+                        // std.debug.print("Found entity : {any}\n", .{archetype.slice(.entity, .id)});
+                        const entity_id = (archetype.slice(.entity, .id))[0];
+                        const input_component = app.world.getComponent(entity_id, .game, .input);
+                        try app.world.setComponent(entity_id, .game, .input, .{
+                            .up = false, 
+                            .down = input_component.?.down, 
+                            .left = input_component.?.left, 
+                            .right = input_component.?.right
+                            }
+                        );
                     }
-                    // switch (ev.key) {
-                    //     .w => {
-                    //         app.orientation_y -= 0.1;
-                    //     },
-                    //     .a => {
-                    //         app.orientation_z += 0.1;
-                    //     },
-                    //     .s => {
-                    //         app.orientation_y += 0.1;
-                    //     },
-                    //     .d => {
-                    //         app.orientation_z -= 0.1;
-                    //     },
-                    //     else => {},
-                    // }
+                }
+                if (ev.key == .a) {
+                    var arch_iter = app.world.query(.{ .all = &.{
+                        .{ .game = &.{.input} },
+                    }});
+                    while (arch_iter.next()) |archetype| {
+                        // std.debug.print("Found entity : {any}\n", .{archetype.slice(.entity, .id)});
+                        const entity_id = (archetype.slice(.entity, .id))[0];
+                        const input_component = app.world.getComponent(entity_id, .game, .input);
+                        try app.world.setComponent(entity_id, .game, .input, .{
+                            .up = input_component.?.up, 
+                            .down = input_component.?.down, 
+                            .left = false, 
+                            .right = input_component.?.right
+                            }
+                        );
+                    }
+                }
+                if (ev.key == .s) {
+                    var arch_iter = app.world.query(.{ .all = &.{
+                        .{ .game = &.{.input} },
+                    }});
+                    while (arch_iter.next()) |archetype| {
+                        // std.debug.print("Found entity : {any}\n", .{archetype.slice(.entity, .id)});
+                        const entity_id = (archetype.slice(.entity, .id))[0];
+                        const input_component = app.world.getComponent(entity_id, .game, .input);
+                        try app.world.setComponent(entity_id, .game, .input, .{
+                            .up = input_component.?.up, 
+                            .down = false, 
+                            .left = input_component.?.left,  
+                            .right = input_component.?.right
+                            }
+                        );
+                    }
+                }
+                if (ev.key == .d) {
+                    var arch_iter = app.world.query(.{ .all = &.{
+                        .{ .game = &.{.input} },
+                    }});
+                    while (arch_iter.next()) |archetype| {
+                        // std.debug.print("Found entity : {any}\n", .{archetype.slice(.entity, .id)});
+                        const entity_id = (archetype.slice(.entity, .id))[0];
+                        const input_component = app.world.getComponent(entity_id, .game, .input);
+                        try app.world.setComponent(entity_id, .game, .input, .{
+                            .up = input_component.?.up, 
+                            .down = input_component.?.down, 
+                            .left = input_component.?.left,  
+                            .right = false,
+                            }
+                        );
+                    }
                 }
             },
             .close => return true,
@@ -251,7 +366,30 @@ pub fn update(app: *App) !bool {
     //     queue.writeBuffer(app.uniform_buffer, 0, &[_]UniformBufferObject{ubo});
     // }
     // const model = zm.mul(zm.rotationX((std.math.pi / 2.0)), zm.rotationZ(app.orientation_z + (std.math.pi / 2.0)));
-    app.orientation =  zm.mul(zm.rotationY(app.orientation_y + (std.math.pi / 2.0)), zm.rotationZ(app.orientation_z + (std.math.pi / 2.0)));
+
+    var arch_iter = app.world.query(.{ .all = &.{
+        .{ .game = &.{.rotation, .input} },
+    }});
+    while (arch_iter.next()) |archetype| {
+        const entity_id = (archetype.slice(.entity, .id))[0];
+        const rotation_component = app.world.getComponent(entity_id, .game, .rotation);
+        const input_component = app.world.getComponent(entity_id, .game, .input);
+        if (input_component.?.up) {
+            try app.world.setComponent(entity_id, .game, .rotation, .{.x = rotation_component.?.x, .y = rotation_component.?.y - 0.01, .z = rotation_component.?.z});
+        }
+        if (input_component.?.left) {
+            try app.world.setComponent(entity_id, .game, .rotation, .{.x = rotation_component.?.x, .y = rotation_component.?.y, .z = rotation_component.?.z + 0.01});
+        }
+        if (input_component.?.down) {
+            try app.world.setComponent(entity_id, .game, .rotation, .{.x = rotation_component.?.x, .y = rotation_component.?.y + 0.01, .z = rotation_component.?.z});
+        }
+        if (input_component.?.right) {
+            try app.world.setComponent(entity_id, .game, .rotation, .{.x = rotation_component.?.x, .y = rotation_component.?.y, .z = rotation_component.?.z - 0.01});
+        }
+        app.orientation = zm.mul(zm.rotationY(rotation_component.?.y + (std.math.pi / 2.0)), zm.rotationZ(rotation_component.?.z + (std.math.pi / 2.0)));
+    }
+
+    // app.orientation =  zm.mul(zm.rotationY(app.orientation_y + (std.math.pi / 2.0)), zm.rotationZ(app.orientation_z + (std.math.pi / 2.0)));
     const view = zm.lookAtRh(
             zm.Vec{ 0, 4, 2, 1 },
             zm.Vec{ 0, 0, 0, 1 },

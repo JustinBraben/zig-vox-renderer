@@ -29,7 +29,16 @@ pub fn build(b: *std.Build) !void {
             .module = b.createModule(.{
                 .root_source_file = .{ .path = "libs/zigimg/zigimg.zig" },
             }),
-        });
+        }
+    );
+
+    try deps.append(std.Build.Module.Import{
+            .name = "mach-ecs",
+            .module = b.createModule(.{
+                .root_source_file = .{ .path = "libs/mach-ecs/src/main.zig" },
+            }),
+        }
+    );
 
     const app = try mach_core.App.init(b, mach_core_dep.builder, .{
         .name = "myapp",
@@ -82,6 +91,13 @@ fn ensureDependencies(allocator: std.mem.Allocator) !void {
         "https://github.com/slimsag/zigimg",
         "ad6ad042662856f55a4d67499f1c4606c9951031",
         sdkPath("/libs/zigimg"),
+    );
+
+    try optional_dependency.ensureGitRepoCloned(
+        allocator, 
+        "https://github.com/hexops/mach-ecs", 
+        "83a3ed801008a976dd79e10068157b02c3b76a36", 
+        sdkPath("/libs/mach-ecs"),
     );
 }
 
