@@ -1,4 +1,5 @@
 const std = @import("std");
+const testing = std.testing;
 const core = @import("mach-core");
 const gpu = core.gpu;
 const ecs = @import("mach-ecs");
@@ -8,33 +9,10 @@ const zigimg = @import("zigimg");
 const Vertex = @import("cube_mesh.zig").Vertex;
 const vertices = @import("cube_mesh.zig").vertices;
 
-const Rotation = struct {
-    x: f32 = 0,
-    y: f32 = 0,
-    z: f32 = 0,
-};
-
-const Input = struct {
-    up: bool = false,
-    down: bool = false,
-    left: bool = false,
-    right: bool = false,
-};
-
-const all_components = .{
-        .entity = struct {
-            pub const id = EntityID;
-        },
-        .game = struct {
-            pub const rotation = Rotation;
-            pub const name = []const u8;
-            pub const input = Input;
-        },
-    };
-
 pub const App = @This();
 
-const Vec2 = @Vector(2, f32);
+const Vec2 = @Vector(2, f64);
+const Vec3 = @Vector(3, f64);
 
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const UniformBufferObject = struct {
@@ -47,24 +25,12 @@ pipeline: *gpu.RenderPipeline,
 vertex_buffer: *gpu.Buffer,
 uniform_buffer: *gpu.Buffer,
 bind_group: *gpu.BindGroup,
-texture: *gpu.Texture,
-texture_view: *gpu.TextureView,
-orientation_x: f32,
-orientation_y: f32,
-orientation_z: f32,
-orientation: zm.Mat,
-world: ecs.Entities(all_components),
-direction: Vec2,
-
-// const sample_count = 4;
+mouse_pos: Vec2,
 
 pub fn init(app: *App) !void {
     try core.init(.{});
-    app.world = try ecs.Entities(all_components).init(gpa.allocator());
-    app.direction = Vec2{ 0, 0 };
 
-    const shader_module = core.device.createShaderModuleWGSL("shader.wgsl", @embedFile("shader.wgsl"));
-    // defer shader_module.release();
+    const shader_module = core.device.createShaderModuleWGSL("instanced_cube_shader.wgsl", @embedFile("instanced_cube_shader.wgsl"));
 
     const vertex_attributes = [_]gpu.VertexAttribute{
         .{ .format = .float32x4, .offset = @offsetOf(Vertex, "pos"), .shader_location = 0 },
@@ -76,11 +42,8 @@ pub fn init(app: *App) !void {
         .attributes = &vertex_attributes,
     });
 
-    // Fragment state
-    const blend = gpu.BlendState{};
     const color_target = gpu.ColorTargetState{
         .format = core.descriptor.format,
-        .blend = &blend,
         .write_mask = gpu.ColorWriteMaskFlags.all,
     };
     const fragment = gpu.FragmentState.init(.{
@@ -95,13 +58,11 @@ pub fn init(app: *App) !void {
             .entries = &.{bgle},
         }),
     );
-    // defer bgl.release();
 
     const bind_group_layouts = [_]*gpu.BindGroupLayout{bgl};
     const pipeline_layout = core.device.createPipelineLayout(&gpu.PipelineLayout.Descriptor.init(.{
         .bind_group_layouts = &bind_group_layouts,
     }));
-    // defer pipeline_layout.release();
 
     const pipeline_descriptor = gpu.RenderPipeline.Descriptor{
         .fragment = &fragment,
@@ -125,17 +86,20 @@ pub fn init(app: *App) !void {
     @memcpy(vertex_mapped.?, vertices[0..]);
     vertex_buffer.unmap();
 
+    const x_count = 4;
+    const y_count = 4;
+    const num_instances = x_count * y_count;
+
     const uniform_buffer = core.device.createBuffer(&.{
         .usage = .{ .copy_dst = true, .uniform = true },
-        .size = @sizeOf(UniformBufferObject),
+        .size = @sizeOf(UniformBufferObject) * num_instances,
         .mapped_at_creation = .false,
     });
-
     const bind_group = core.device.createBindGroup(
         &gpu.BindGroup.Descriptor.init(.{
             .layout = bgl,
             .entries = &.{
-                gpu.BindGroup.Entry.buffer(0, uniform_buffer, 0, @sizeOf(UniformBufferObject)),
+                gpu.BindGroup.Entry.buffer(0, uniform_buffer, 0, @sizeOf(UniformBufferObject) * num_instances),
             },
         }),
     );
@@ -146,15 +110,6 @@ pub fn init(app: *App) !void {
     app.vertex_buffer = vertex_buffer;
     app.uniform_buffer = uniform_buffer;
     app.bind_group = bind_group;
-    app.orientation_x = 0.0;
-    app.orientation_y = 0.0;
-    app.orientation_z = 0.0;
-    app.orientation = zm.mul(zm.rotationX((std.math.pi / 2.0)), zm.rotationZ((std.math.pi / 2.0)));
-
-    const cube1 = try app.world.new();
-    try app.world.setComponent(cube1, .game, .name, "jane");
-    try app.world.setComponent(cube1, .game, .input, .{.up = false, .down = false, .left = false, .right = false});
-    try app.world.setComponent(cube1, .game, .rotation, .{.x = 0.0, .y = 0.0, .z = 0.0});
 
     shader_module.release();
     pipeline_layout.release();
@@ -164,7 +119,6 @@ pub fn init(app: *App) !void {
 pub fn deinit(app: *App) void {
     defer _ = gpa.deinit();
     defer core.deinit();
-    defer app.world.deinit();
 
     app.vertex_buffer.release();
     app.uniform_buffer.release();
@@ -179,21 +133,27 @@ pub fn update(app: *App) !bool {
             .key_press => |ev| {
                 switch (ev.key) {
                     .escape => return true,
-                    .w => app.direction[1] += 0.01,
-                    .a => app.direction[0] += 0.01,
-                    .s => app.direction[1] -= 0.01,
-                    .d => app.direction[0] -= 0.01,
+                    .w => {},
+                    .a => {},
+                    .s => {},
+                    .d => {},
                     else => {},
                 }
             },
             .key_release => |ev| {
                 switch (ev.key) {
-                    .w => app.direction[1] = 0,
-                    .a => app.direction[0] = 0,
-                    .s => app.direction[1] = 0,
-                    .d => app.direction[0] = 0,
+                    .w => {},
+                    .a => {},
+                    .s => {},
+                    .d => {},
                     else => {},
                 }
+            },
+            .mouse_motion => |ev| {
+                const x = ev.pos.x;
+                const y = ev.pos.x;
+                app.mouse_pos = Vec2{ x, y };
+                // std.debug.print("Mouse Pos: ({any}, {any})\n", .{ x, y });
             },
             .close => return true,
             else => {},
@@ -208,63 +168,57 @@ pub fn update(app: *App) !bool {
         .store_op = .store,
     };
 
-    const queue = core.queue;
     const encoder = core.device.createCommandEncoder(null);
     const render_pass_info = gpu.RenderPassDescriptor.init(.{
         .color_attachments = &.{color_attachment},
     });
-    // {
-    //     const time = app.timer.read();
-    //     const model = zm.mul(zm.rotationX(time * (std.math.pi / 2.0)), zm.rotationZ(time * (std.math.pi / 2.0)));
-    //     const view = zm.lookAtRh(
-    //         zm.Vec{ 0, 4, 2, 1 },
-    //         zm.Vec{ 0, 0, 0, 1 },
-    //         zm.Vec{ 0, 0, 1, 0 },
-    //     );
-    //     const proj = zm.perspectiveFovRh(
-    //         (std.math.pi / 4.0),
-    //         @as(f32, @floatFromInt(core.descriptor.width)) / @as(f32, @floatFromInt(core.descriptor.height)),
-    //         0.1,
-    //         10,
-    //     );
-    //     const mvp = zm.mul(zm.mul(model, view), proj);
-    //     const ubo = UniformBufferObject{
-    //         .mat = zm.transpose(mvp),
-    //     };
-    //     queue.writeBuffer(app.uniform_buffer, 0, &[_]UniformBufferObject{ubo});
-    // }
-    // const model = zm.mul(zm.rotationX((std.math.pi / 2.0)), zm.rotationZ(app.orientation_z + (std.math.pi / 2.0)));
-    app.orientation_z += app.direction[0];
-    app.orientation_y += app.direction[1];
-    app.orientation =  zm.mul(zm.rotationY(app.orientation_y + (std.math.pi / 2.0)), zm.rotationZ(app.orientation_z + (std.math.pi / 2.0)));
-    const view = zm.lookAtRh(
-            zm.Vec{ 0, 4, 2, 1 },
-            zm.Vec{ 0, 0, 0, 1 },
-            zm.Vec{ 0, 0, 1, 0 },
-        );
-    const proj = zm.perspectiveFovRh(
-            (std.math.pi / 4.0),
+    
+    {
+        const proj = zm.perspectiveFovRh(
+            (std.math.pi / 3.0), 
             @as(f32, @floatFromInt(core.descriptor.width)) / @as(f32, @floatFromInt(core.descriptor.height)),
-            0.1,
-            10,
+            10, 
+            30
         );
-    const mvp = zm.mul(zm.mul(app.orientation, view), proj);
-        const ubo = UniformBufferObject{
-            .mat = zm.transpose(mvp),
-        };
-    queue.writeBuffer(app.uniform_buffer, 0, &[_]UniformBufferObject{ubo});
+
+        const invProj = zm.inverse(proj);
+        _ = invProj;
+
+        var ubos: [16]UniformBufferObject = undefined;
+        const time = app.timer.read();
+        const step: f32 = 4.0;
+        var m: u8 = 0;
+        var x: u8 = 0;
+        while (x < 4) : (x += 1) {
+            var y: u8 = 0;
+            while (y < 4) : (y += 1) {
+                const trans = zm.translation(step * (@as(f32, @floatFromInt(x)) - 2.0 + 0.5), step * (@as(f32, @floatFromInt(y)) - 2.0 + 0.5), -20);
+                const localTime = time + @as(f32, @floatFromInt(m)) * 0.5;
+                const model = zm.mul(zm.mul(zm.mul(zm.rotationX(localTime * (std.math.pi / 2.1)), zm.rotationY(localTime * (std.math.pi / 0.9))), zm.rotationZ(localTime * (std.math.pi / 1.3))), trans);
+                const mvp = zm.mul(model, proj);
+                const ubo = UniformBufferObject{
+                    .mat = mvp,
+                };
+                ubos[m] = ubo;
+                m += 1;
+                //std.debug.print("mvp[0]: {any}\n", .{ mvp[0] });
+            }
+        }
+        encoder.writeBuffer(app.uniform_buffer, 0, &ubos);
+    }
 
     const pass = encoder.beginRenderPass(&render_pass_info);
     pass.setPipeline(app.pipeline);
     pass.setVertexBuffer(0, app.vertex_buffer, 0, @sizeOf(Vertex) * vertices.len);
     pass.setBindGroup(0, app.bind_group, &.{0});
-    pass.draw(vertices.len, 1, 0, 0);
+    pass.draw(vertices.len, 16, 0, 0);
     pass.end();
     pass.release();
 
     var command = encoder.finish(null);
     encoder.release();
 
+    const queue = core.queue;
     queue.submit(&[_]*gpu.CommandBuffer{command});
     command.release();
     core.swap_chain.present();
@@ -279,4 +233,14 @@ pub fn update(app: *App) !bool {
     }
 
     return false;
+}
+
+test "example test" {
+    try testing.expectEqual(0, 0);
+}
+
+test "example add" {
+    const num1 = 0;
+    const num2 = 2;
+    try testing.expectEqual(num1 + 2, num2);
 }
