@@ -6,3 +6,4 @@ const root_path = "assets/";
 const sprites_path = root_path ++ "characters/";
 
 pub const sprites_sheet_png = @embedFile("assets/characters/sheet.png");
+pub const animation_sheet_png = @embedFile("assets/characters/AnimationSheet_Character.png");
