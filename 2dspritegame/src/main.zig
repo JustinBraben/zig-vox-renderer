@@ -15,6 +15,19 @@ const Vec2 = @Vector(2, f32);
 const UniformBufferObject = struct {
     mat: zm.Mat,
 };
+const AnimationFrame = extern struct {
+    id: u8,
+    pos: Vec2,
+};
+const Animation = extern struct {
+    id: u8,
+    size: Vec2,
+    world_pos: Vec2,
+    sheet_size: Vec2,
+    speed: f32,
+    loop: bool,
+    current_frame: usize,
+};
 const Sprite = extern struct {
     pos: Vec2,
     size: Vec2,
@@ -44,9 +57,22 @@ const SpriteSheet = struct {
     width: f32,
     height: f32,
 };
+const JSONFrame = struct {
+    id: u8,
+    pos: []f32,
+};
+const JSONAnimation = struct {
+    id: u8,
+    size: []f32,
+    world_pos: []f32,
+    speed: f32,
+    loop: bool,
+    frames: []JSONFrame,
+};
 const JSONData = struct {
     sheet: SpriteSheet,
     sprites: []JSONSprite,
+    animations: []JSONAnimation,
 };
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 
@@ -56,10 +82,13 @@ fps_timer: core.Timer,
 pipeline: *gpu.RenderPipeline,
 uniform_buffer: *gpu.Buffer,
 bind_group: *gpu.BindGroup,
+bind_group_animation: *gpu.BindGroup,
 sheet: SpriteSheet,
 sprites_buffer: *gpu.Buffer,
 sprites: std.ArrayList(Sprite),
 sprites_frames: std.ArrayList(SpriteFrames),
+animations: std.ArrayList(Animation),
+animation_frames: std.ArrayList(AnimationFrame),
 player_pos: Vec2,
 direction: Vec2,
 player_sprite_index: usize,
@@ -69,7 +98,11 @@ pub fn init(app: *App) !void {
 
     const allocator = gpa.allocator();
 
-    const sprites_file = try std.fs.cwd().openFile("../../2dspritegame/src/sprites.json", .{ .mode = .read_only });
+    const json_path = try std.fs.cwd().realpathAlloc(allocator, "../../src/sprites.json");
+    defer allocator.free(json_path);
+    std.debug.print("json path : {s}", .{json_path});
+
+    const sprites_file = try std.fs.cwd().openFile(json_path, .{ .mode = .read_only });
     defer sprites_file.close();
     const file_size = (try sprites_file.stat()).size;
     const buffer = try allocator.alloc(u8, file_size);
@@ -100,6 +133,25 @@ pub fn init(app: *App) !void {
         try app.sprites_frames.append(.{ .up = Vec2{ sprite.frames.up[0], sprite.frames.up[1] }, .down = Vec2{ sprite.frames.down[0], sprite.frames.down[1] }, .left = Vec2{ sprite.frames.left[0], sprite.frames.left[1] }, .right = Vec2{ sprite.frames.right[0], sprite.frames.right[1] } });
     }
     std.log.info("Number of sprites: {}", .{app.sprites.items.len});
+
+    app.animations = std.ArrayList(Animation).init(allocator);
+    app.animation_frames = std.ArrayList(AnimationFrame).init(allocator);
+    for (root.value.animations) |animation| {
+        std.log.info("Animation World Position: {} {}", .{ animation.world_pos[0], animation.world_pos[1] });
+        std.log.info("Animation Dimensions: {} {}", .{ animation.size[0], animation.size[1] });
+        try app.animations.append(.{
+            .id = animation.id,
+            .size = Vec2{ animation.size[0], animation.size[1] },
+            .world_pos = Vec2{ animation.world_pos[0], animation.world_pos[1] },
+            .sheet_size = Vec2{ app.sheet.width, app.sheet.height },
+            .speed = animation.speed,
+            .loop = animation.loop,
+            .current_frame = 0,
+        });
+        for (animation.frames) |frame| {
+            try app.animation_frames.append(.{ .id = frame.id, .pos = Vec2{ frame.pos[0], frame.pos[1] } });
+        }
+    }
 
     const shader_module = core.device.createShaderModuleWGSL("sprite-shader.wgsl", @embedFile("sprite-shader.wgsl"));
 
@@ -143,6 +195,15 @@ pub fn init(app: *App) !void {
     const sprites_mapped = sprites_buffer.getMappedRange(Sprite, 0, app.sprites.items.len);
     @memcpy(sprites_mapped.?, app.sprites.items[0..]);
     sprites_buffer.unmap();
+
+    // const animation_buffer = core.device.createBuffer(&.{
+    //     .usage = .{ .storage = true, .copy_dst = true },
+    //     .size = @sizeOf(Animation) * app.animations.items.len,
+    //     .mapped_at_creation = .true,
+    // });
+    // const animation_mapped = animation_buffer.getMappedRange(Animation, 0, app.animations.items.len);
+    // @memcpy(animation_mapped.?, app.animations.items[0..]);
+    // animation_buffer.unmap();
 
     // Create a sampler with linear filtering for smooth interpolation.
     const sampler = core.device.createSampler(&.{
@@ -198,7 +259,6 @@ pub fn init(app: *App) !void {
             },
         }),
     );
-    texture_view.release();
     sampler.release();
     bind_group_layout.release();
 
@@ -220,6 +280,8 @@ pub fn deinit(app: *App) void {
     app.pipeline.release();
     app.sprites.deinit();
     app.sprites_frames.deinit();
+    app.animations.deinit();
+    app.animation_frames.deinit();
     app.uniform_buffer.release();
     app.bind_group.release();
     app.sprites_buffer.release();
@@ -250,6 +312,29 @@ pub fn update(app: *App) !bool {
                 }
             },
             .close => return true,
+            .mouse_press => |ev| {
+                switch (ev.button) {
+                    .left => {
+                        const descriptor = core.descriptor;
+                        const window_size: [2]f32 = .{ @floatFromInt(core.size().width), @floatFromInt(core.size().height) };
+                        const framebuffer_size: [2]f32 = .{ @floatFromInt(descriptor.width), @floatFromInt(descriptor.height) };
+                        const content_scale: [2]f32 = .{
+                            framebuffer_size[0] / window_size[0],
+                            framebuffer_size[1] / window_size[1],
+                        };
+                        var position: [2]f32 = .{ 0.0, 0.0 };
+                        position = .{ @floatCast(ev.pos.x * content_scale[0]), @floatCast(ev.pos.y * content_scale[1]) };
+
+                        position[0] = (@as(f32, @floatFromInt(descriptor.width)) / 2.0) - position[0];
+                        position[1] = (@as(f32, @floatFromInt(descriptor.height)) / 2.0) - position[1];
+
+                        std.debug.print("Mouse Press, x:{any}, y:{any}\n", .{ ev.pos.x, ev.pos.y });
+                        std.debug.print("Mouse Press transformed to world, x:{any}, y:{any}\n", .{ position[0], position[1] });
+                        std.debug.print("player pos: x:{any}, y:{any}\n", .{app.player_pos[0], app.player_pos[1]});
+                    },
+                    else => {},
+                }
+            },
             else => {},
         }
     }
