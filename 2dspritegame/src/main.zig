@@ -1,9 +1,9 @@
 const std = @import("std");
 const core = @import("mach-core");
 const gpu = core.gpu;
-const zm = @import("zmath");
+const zm = @import("zmath.zig");
 const zigimg = @import("zigimg");
-const assets = @import("assets");
+const assets = @import("assets.zig");
 const json = std.json;
 
 pub const App = @This();
@@ -69,7 +69,7 @@ pub fn init(app: *App) !void {
 
     const allocator = gpa.allocator();
 
-    const sprites_file = try std.fs.cwd().openFile("../../examples/sprite2d/sprites.json", .{ .mode = .read_only });
+    const sprites_file = try std.fs.cwd().openFile("../../2dspritegame/src/sprites.json", .{ .mode = .read_only });
     defer sprites_file.close();
     const file_size = (try sprites_file.stat()).size;
     const buffer = try allocator.alloc(u8, file_size);
