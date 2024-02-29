@@ -71,7 +71,6 @@ const JSONAnimation = struct {
 };
 const JSONData = struct {
     sheet: SpriteSheet,
-    sprites: []JSONSprite,
     animations: []JSONAnimation,
 };
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -85,7 +84,18 @@ pub fn init(app: *App) !void {
 
     const allocator = gpa.allocator();
 
-    _ = allocator;
+    const json_path = try std.fs.realpathAlloc(allocator, "../../src/sprites.json");
+    defer allocator.free(json_path);
+
+    const sprites_file = try std.fs.cwd().openFile(json_path, .{ .mode = .read_only });
+    defer sprites_file.close();
+    const file_size = (try sprites_file.stat()).size;
+    const buffer = try allocator.alloc(u8, file_size);
+    defer allocator.free(buffer);
+    try sprites_file.reader().readNoEof(buffer);
+    const root = try std.json.parseFromSlice(JSONData, allocator, buffer, .{});
+    defer root.deinit();
+
     app.title_timer = try core.Timer.start();
     app.timer = try core.Timer.start();
     app.fps_timer = try core.Timer.start();
