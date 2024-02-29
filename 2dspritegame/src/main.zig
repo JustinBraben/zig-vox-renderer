@@ -15,44 +15,6 @@ const Vec2 = @Vector(2, f32);
 const UniformBufferObject = struct {
     mat: zm.Mat,
 };
-const AnimationFrame = extern struct {
-    id: u8,
-    pos: Vec2,
-};
-const Animation = extern struct {
-    id: u8,
-    size: Vec2,
-    world_pos: Vec2,
-    sheet_size: Vec2,
-    speed: f32,
-    loop: bool,
-    current_frame: usize,
-};
-const Sprite = extern struct {
-    pos: Vec2,
-    size: Vec2,
-    world_pos: Vec2,
-    sheet_size: Vec2,
-};
-const SpriteFrames = extern struct {
-    up: Vec2,
-    down: Vec2,
-    left: Vec2,
-    right: Vec2,
-};
-const JSONFrames = struct {
-    up: []f32,
-    down: []f32,
-    left: []f32,
-    right: []f32,
-};
-const JSONSprite = struct {
-    pos: []f32,
-    size: []f32,
-    world_pos: []f32,
-    is_player: bool = false,
-    frames: JSONFrames,
-};
 const SpriteSheet = struct {
     width: f32,
     height: f32,
@@ -78,6 +40,9 @@ var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 title_timer: core.Timer,
 timer: core.Timer,
 fps_timer: core.Timer,
+sheet: SpriteSheet,
+player_pos: Vec2,
+direction: Vec2,
 
 pub fn init(app: *App) !void {
     try core.init(.{});
@@ -95,6 +60,11 @@ pub fn init(app: *App) !void {
     try sprites_file.reader().readNoEof(buffer);
     const root = try std.json.parseFromSlice(JSONData, allocator, buffer, .{});
     defer root.deinit();
+
+    app.player_pos = Vec2{ 0, 0 };
+    app.direction = Vec2{ 0, 0 };
+    app.sheet = root.value.sheet;
+    std.log.info("Sheet Dimensions: {} {}", .{ app.sheet.width, app.sheet.height });
 
     app.title_timer = try core.Timer.start();
     app.timer = try core.Timer.start();
