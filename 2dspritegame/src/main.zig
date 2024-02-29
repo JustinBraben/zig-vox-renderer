@@ -15,6 +15,19 @@ const Vec2 = @Vector(2, f32);
 const UniformBufferObject = struct {
     mat: zm.Mat,
 };
+const Animation = extern struct {
+    animation_id: u8,
+    size: Vec2,
+    world_pos: Vec2,
+    sheet_size: Vec2,
+    speed: f32,
+    loop: bool,
+    frames: AnimationFrames,
+};
+const AnimationFrames = extern struct {
+    animation_frame_id: u8,
+    pos: Vec2,
+};
 const SpriteSheet = struct {
     width: f32,
     height: f32,
@@ -41,6 +54,8 @@ title_timer: core.Timer,
 timer: core.Timer,
 fps_timer: core.Timer,
 sheet: SpriteSheet,
+animations: std.ArrayList(Animation),
+animation_frames: std.ArrayList(AnimationFrames),
 player_pos: Vec2,
 direction: Vec2,
 
@@ -65,6 +80,12 @@ pub fn init(app: *App) !void {
     app.direction = Vec2{ 0, 0 };
     app.sheet = root.value.sheet;
     std.log.info("Sheet Dimensions: {} {}", .{ app.sheet.width, app.sheet.height });
+    app.animations = std.ArrayList(Animation).init(allocator);
+    app.animation_frames = std.ArrayList(AnimationFrames).init(allocator);
+    for(root.value.animations) |animation| {
+        std.log.info("Animation World Position: {} {}", .{ animation.world_pos[0], animation.world_pos[1] });
+        // std.log.info("Animation Texture Position: {} {}", .{  });
+    }
 
     app.title_timer = try core.Timer.start();
     app.timer = try core.Timer.start();
@@ -74,7 +95,9 @@ pub fn init(app: *App) !void {
 pub fn deinit(app: *App) void {
     defer _ = gpa.deinit();
     defer core.deinit();
-    _ = app;
+    
+    app.animations.deinit();
+    app.animation_frames.deinit();
 }
 
 pub fn update(app: *App) !bool {
