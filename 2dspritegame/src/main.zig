@@ -84,7 +84,26 @@ pub fn init(app: *App) !void {
     app.animation_frames = std.ArrayList(AnimationFrames).init(allocator);
     for(root.value.animations) |animation| {
         std.log.info("Animation World Position: {} {}", .{ animation.world_pos[0], animation.world_pos[1] });
-        // std.log.info("Animation Texture Position: {} {}", .{  });
+        for (animation.frames) |frame| {
+            std.log.info("Frame Position: {} {}", .{ frame.pos[0], frame.pos[1] });
+            try app.animation_frames.append(.{
+                .animation_frame_id = frame.id,
+                .pos = Vec2{ frame.pos[0], frame.pos[1] },
+            });
+        }
+        std.log.info("Animation Texture Position: {} {}", .{ animation.size[0], animation.size[1] });
+
+        // try app.animations.append(.{
+        //     .animation_id = animation.id,
+        //     .size = Vec2{ animation.size[0], animation.size[1] },
+        //     .world_pos = Vec2{ animation.world_pos[0], animation.world_pos[1] },
+        //     .sheet_size = Vec2{ app.sheet.width, app.sheet.height },
+        //     .speed = animation.speed,
+        //     .loop = animation.loop,
+        //     .frames = app.animation_frames.items(),
+        // });
+
+        // app.animation_frames.deinit();
     }
 
     app.title_timer = try core.Timer.start();
