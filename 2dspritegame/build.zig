@@ -1,6 +1,8 @@
 const std = @import("std");
 const mach_core = @import("mach_core");
 
+const ProcessAssetsStep = @import("src/tools/process_assets.zig").ProcessAssetsStep;
+
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
 // runner.
@@ -45,6 +47,11 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         .deps = deps.items,
     });
+
+    const assets = ProcessAssetsStep.init(b, "assets", "src/assets.zig", "src/animations.zig");
+    const process_assets_step = b.step("process-assets", "generates struct for all assets");
+    process_assets_step.dependOn(&assets.step);
+    app.compile.step.dependOn(&assets.step);
 
     if (b.args) |args| app.run.addArgs(args);
 
