@@ -2,6 +2,7 @@ const std = @import("std");
 const gl = @import("gl");
 const glm = @import("ziglm");
 const ShaderProgram = @import("../Rendering//shader_program.zig").ShaderProgram;
+const VertexArray = @import("../Rendering/vertex_array.zig");
 const Allocator = std.mem.Allocator;
 
 const Mat4x4 = glm.Mat4x4;
