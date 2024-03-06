@@ -27,4 +27,8 @@ pub const Buffer = struct {
     fn isValid(self: *Self) bool {
         return self.id != 0;
     }
-}; 
+};
+
+pub const VertexBuffer = struct {
+    usingnamespace Buffer;
+};

@@ -35,3 +35,7 @@ pub const VertexAttribute = struct {
         };
     }
 };
+
+pub const VertexArray = struct {
+    id: u32 = 0,
+};
