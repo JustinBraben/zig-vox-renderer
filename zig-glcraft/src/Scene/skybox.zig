@@ -19,9 +19,9 @@ pub const Skybox = struct {
     rotation: f32 = 0,
     rotation_speed: f32 = 0.01,
 
-    pub fn init(allocator: Allocator) !Self {
+    pub fn init(allocator: Allocator) !Skybox {
         const transform = Mat4x4(f32).as(1);
-        return Self{
+        return .{
             .allocator = allocator,
             .transform = transform,
         };
