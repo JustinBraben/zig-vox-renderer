@@ -48,10 +48,10 @@ pub fn build(b: *std.Build) !void {
         .deps = deps.items,
     });
 
-    const assets = ProcessAssetsStep.init(b, "assets", "src/assets.zig", "src/animations.zig");
-    const process_assets_step = b.step("process-assets", "generates struct for all assets");
-    process_assets_step.dependOn(&assets.step);
-    app.compile.step.dependOn(&assets.step);
+    // const assets = ProcessAssetsStep.init(b, "assets", "src/assets.zig", "src/animations.zig");
+    // const process_assets_step = b.step("process-assets", "generates struct for all assets");
+    // process_assets_step.dependOn(&assets.step);
+    // app.compile.step.dependOn(&assets.step);
 
     if (b.args) |args| app.run.addArgs(args);
 
