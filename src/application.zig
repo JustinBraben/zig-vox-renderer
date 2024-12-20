@@ -62,9 +62,11 @@ pub fn init(gpa: Allocator, config: ConfigOptions) !Application {
     gl.enable(gl.DEPTH_TEST);
     gl.enable(gl.CULL_FACE);
     gl.enable(gl.MULTISAMPLE);
+    gl.enable(gl.TEXTURE_CUBE_MAP_SEAMLESS);
 
     zgui.init(gpa);
     zstbi.init(gpa);
+    zgui.backend.init(window);
 
     return .{
         .allocator = gpa,
@@ -74,6 +76,7 @@ pub fn init(gpa: Allocator, config: ConfigOptions) !Application {
 }
 
 pub fn deinit(self: *Application) void {
+    zgui.backend.deinit();
     zstbi.deinit();
     zgui.deinit();
     self.window.destroy();
@@ -124,21 +127,29 @@ pub fn runLoop(self: *Application) !void {
     // Create two separate VBOs - one for positions, one for texture coordinates
     var positionVBO = try VBO.init();
     defer positionVBO.deinit();
+    var normalVBO = try VBO.init();
+    defer normalVBO.deinit();
     var texCoordVBO = try VBO.init();
     defer texCoordVBO.deinit();
 
-    // Bind VAO
+    // Buffer vertex position data
     cubeVAO.bind();
     positionVBO.bind(gl.ARRAY_BUFFER);
     positionVBO.bufferData(gl.ARRAY_BUFFER, cube_mesh.vertex_positions, gl.STATIC_DRAW);
     cubeVAO.enableVertexAttribArray(0);
     cubeVAO.setVertexAttributePointer(0, 3, gl.FLOAT, gl.FALSE, 3 * @sizeOf(gl.Float), null);
 
+    // Buffer normal position data
+    normalVBO.bind(gl.ARRAY_BUFFER);
+    normalVBO.bufferData(gl.ARRAY_BUFFER, cube_mesh.normal_positions, gl.STATIC_DRAW);
+    cubeVAO.enableVertexAttribArray(1);
+    cubeVAO.setVertexAttributePointer(1, 3, gl.FLOAT, gl.FALSE, 3 * @sizeOf(gl.Float), null);
+
     // Buffer texture coordinate data
     texCoordVBO.bind(gl.ARRAY_BUFFER);
     texCoordVBO.bufferData(gl.ARRAY_BUFFER, cube_mesh.texture_coords, gl.STATIC_DRAW);
-    cubeVAO.enableVertexAttribArray(1);
-    cubeVAO.setVertexAttributePointer(1, 2, gl.FLOAT, gl.FALSE, 2 * @sizeOf(gl.Float), null);
+    cubeVAO.enableVertexAttribArray(2);
+    cubeVAO.setVertexAttributePointer(2, 2, gl.FLOAT, gl.FALSE, 2 * @sizeOf(gl.Float), null);
     cubeVAO.unbind();
 
     // Add this after your cube VAO/VBO setup code:
@@ -158,19 +169,19 @@ pub fn runLoop(self: *Application) !void {
     const vec4Size = 4 * @sizeOf(gl.Float);
     const mat4Size = 4 * vec4Size;
 
-    cubeVAO.enableVertexAttribArray(2);
-    gl.vertexAttribPointer(2, 4, gl.FLOAT, gl.FALSE, mat4Size, null);
     cubeVAO.enableVertexAttribArray(3);
-    gl.vertexAttribPointer(3, 4, gl.FLOAT, gl.FALSE, mat4Size, @ptrFromInt(vec4Size));
+    gl.vertexAttribPointer(3, 4, gl.FLOAT, gl.FALSE, mat4Size, null);
     cubeVAO.enableVertexAttribArray(4);
-    gl.vertexAttribPointer(4, 4, gl.FLOAT, gl.FALSE, mat4Size, @ptrFromInt(2 * vec4Size));
+    gl.vertexAttribPointer(4, 4, gl.FLOAT, gl.FALSE, mat4Size, @ptrFromInt(vec4Size));
     cubeVAO.enableVertexAttribArray(5);
-    gl.vertexAttribPointer(5, 4, gl.FLOAT, gl.FALSE, mat4Size, @ptrFromInt(3 * vec4Size));
+    gl.vertexAttribPointer(5, 4, gl.FLOAT, gl.FALSE, mat4Size, @ptrFromInt(2 * vec4Size));
+    cubeVAO.enableVertexAttribArray(6);
+    gl.vertexAttribPointer(6, 4, gl.FLOAT, gl.FALSE, mat4Size, @ptrFromInt(3 * vec4Size));
 
-    gl.vertexAttribDivisor(2, 1);
     gl.vertexAttribDivisor(3, 1);
     gl.vertexAttribDivisor(4, 1);
     gl.vertexAttribDivisor(5, 1);
+    gl.vertexAttribDivisor(6, 1);
 
     cubeVAO.unbind();
 
@@ -211,6 +222,8 @@ pub fn runLoop(self: *Application) !void {
     // --------------------
     shader.use();
     shader.setInt("texture_diffuse1", 0);
+    shader.setInt("material.diffuse", 0);
+    shader.setInt("material.specular", 1);
 
     skybox_shader.use();
     skybox_shader.setInt("skybox", 0);
@@ -225,9 +238,7 @@ pub fn runLoop(self: *Application) !void {
     var projection: [16]f32 = undefined;
 
     var wireframe: bool = false;
-
-    zgui.backend.init(self.window);
-    defer zgui.backend.deinit();
+    var light_direction: [3]f32 = .{ 0.0, -1.0, 0.0 };
 
     while (!self.window.shouldClose()) {
         // per-frame time logic
@@ -245,6 +256,13 @@ pub fn runLoop(self: *Application) !void {
 
         // draw scene as normal
         shader.use();
+        // const light_x_direction: f32 = @floatCast(@sin(glfw.getTime()) * 0.5);
+        shader.setVec3f("light.direction",  light_direction);
+        shader.setVec3f("viewPos", camera.getViewPos());
+        shader.setVec3f("light.ambient",  .{ 0.2, 0.2, 0.2 });
+        shader.setVec3f("light.diffuse",  .{ 0.8, 0.8, 0.8 });
+        shader.setVec3f("light.specular",  .{ 1.0, 1.0, 1.0 });
+        shader.setFloat("material.shininess", 64.0);
 
         zm.storeMat(&model, zm.identity());
 
@@ -273,8 +291,8 @@ pub fn runLoop(self: *Application) !void {
         cubeVAO.unbind();
 
         // draw skybox as last
-        gl.depthFunc(gl.LEQUAL);  // change depth function so depth test passes when values are equal to depth buffer's content
         skybox_shader.use();
+        gl.depthFunc(gl.LEQUAL);  // change depth function so depth test passes when values are equal to depth buffer's content
         viewM = zm.loadMat34(&view);
         zm.storeMat(&view, viewM);
         skybox_shader.setMat4f("view", view);
@@ -294,6 +312,7 @@ pub fn runLoop(self: *Application) !void {
         zgui.setNextWindowSize(.{ .w = 0.0, .h = 0.0, .cond = .first_use_ever });
         if (zgui.begin("Debug Window", .{})) {
             _ = zgui.checkbox("wireframe", .{ .v = &wireframe });
+            _ = zgui.dragFloat3("light direction", .{ .v = &light_direction, .min = -1.0, .max = 1.0, });
         }
         zgui.end();
         zgui.backend.draw();
@@ -318,7 +337,7 @@ fn handleEvents(self: *Application, deltaTime: f32) void {
         }
     }
 
-    camera.speed_modifier = if (self.window.getKey(.left_shift) == .press) 3.0 else 1.0;
+    camera.speed_modifier = if (self.window.getKey(.left_shift) == .press) 10.0 else 5.0;
 
     if (self.window.getKey(.w) == .press) {
         camera.processKeyboard(.FORWARD, deltaTime);
