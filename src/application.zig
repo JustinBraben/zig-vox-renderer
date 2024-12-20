@@ -228,9 +228,6 @@ pub fn runLoop(self: *Application) !void {
     skybox_shader.use();
     skybox_shader.setInt("skybox", 0);
 
-    // Buffer to store Model matrix
-    var model: [16]f32 = undefined;
-
     // View matrix
     var view: [16]f32 = undefined;
 
@@ -238,7 +235,7 @@ pub fn runLoop(self: *Application) !void {
     var projection: [16]f32 = undefined;
 
     var wireframe: bool = false;
-    var light_direction: [3]f32 = .{ 0.0, -1.0, 0.0 };
+    var light_direction: [3]f32 = .{ 0.0, -1.0, -1.0 };
 
     while (!self.window.shouldClose()) {
         // per-frame time logic
@@ -264,13 +261,15 @@ pub fn runLoop(self: *Application) !void {
         shader.setVec3f("light.specular",  .{ 1.0, 1.0, 1.0 });
         shader.setFloat("material.shininess", 64.0);
 
-        zm.storeMat(&model, zm.identity());
-
+        // TODO: Only change this when view changes 
+        // which is whenever the camera moves
         var viewM = camera.getViewMatrix();
         zm.storeMat(&view, viewM);
         shader.setMat4f("view", view);
 
-        // view/projection transformations
+        // TODO: This projection could just be calculated up front 
+        // and only recalculated when 
+        // window size changes, camera zoom changes, near/far changes etc
         const window_size = self.window.getSize();
         const aspect_ratio: f32 = @as(f32, @floatFromInt(window_size[0])) / @as(f32, @floatFromInt(window_size[1]));
         const projectionM = zm.perspectiveFovRhGl(Utils.radians(camera.zoom), aspect_ratio, 0.1, 1000.0);
@@ -293,6 +292,7 @@ pub fn runLoop(self: *Application) !void {
         // draw skybox as last
         skybox_shader.use();
         gl.depthFunc(gl.LEQUAL);  // change depth function so depth test passes when values are equal to depth buffer's content
+        gl.cullFace(gl.FRONT);
         viewM = zm.loadMat34(&view);
         zm.storeMat(&view, viewM);
         skybox_shader.setMat4f("view", view);
@@ -305,6 +305,7 @@ pub fn runLoop(self: *Application) !void {
         gl.drawArrays(gl.TRIANGLES, 0, 36);
         skyboxVAO.unbind();
         gl.depthFunc(gl.LESS); // set depth function back to default
+        gl.cullFace(gl.BACK);  // set cull function back to default
 
         const fb_size = self.window.getFramebufferSize();
         zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));

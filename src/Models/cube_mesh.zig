@@ -6,17 +6,17 @@ const CubeMesh = @This();
 
 vertex_positions: []const gl.Float = &[_]gl.Float{
     // back face (CCW winding)
-    0.5, -0.5, -0.5,   // bottom-left
+    0.5, -0.5, -0.5,    // bottom-left
     -0.5, -0.5, -0.5,   // bottom-right
     -0.5,  0.5, -0.5,   // top-right
     -0.5,  0.5, -0.5,   // top-right
-    0.5,  0.5, -0.5,   // top-left
-    0.5, -0.5, -0.5,   // bottom-left
+    0.5,  0.5, -0.5,    // top-left
+    0.5, -0.5, -0.5,    // bottom-left
     // front face (CCW winding)
     -0.5, -0.5,  0.5,   // bottom-left
-    0.5, -0.5,  0.5,   // bottom-right
-    0.5,  0.5,  0.5,   // top-right
-    0.5,  0.5,  0.5,   // top-right
+    0.5, -0.5,  0.5,    // bottom-right
+    0.5,  0.5,  0.5,    // top-right
+    0.5,  0.5,  0.5,    // top-right
     -0.5,  0.5,  0.5,   // top-left
     -0.5, -0.5,  0.5,   // bottom-left
     // left face (CCW)
@@ -34,19 +34,19 @@ vertex_positions: []const gl.Float = &[_]gl.Float{
     0.5,  0.5,  0.5,   // top-left
     0.5, -0.5,  0.5,   // bottom-left
     // bottom face (CCW)      
-    -0.5, -0.5, -0.5,  // bottom-left
-    0.5, -0.5, -0.5,  // bottom-right
-    0.5, -0.5,  0.5,  // top-right
-    0.5, -0.5,  0.5,  // top-right
-    -0.5, -0.5,  0.5,  // top-left
-    -0.5, -0.5, -0.5,  // bottom-left
+    -0.5, -0.5, -0.5,   // bottom-left
+    0.5, -0.5, -0.5,    // bottom-right
+    0.5, -0.5,  0.5,    // top-right
+    0.5, -0.5,  0.5,    // top-right
+    -0.5, -0.5,  0.5,   // top-left
+    -0.5, -0.5, -0.5,   // bottom-left
     // top face (CCW)
-    -0.5,  0.5,  0.5,  // bottom-left
-    0.5,  0.5,  0.5,  // bottom-right
-    0.5,  0.5, -0.5,  // top-right
-    0.5,  0.5, -0.5,  // top-right
-    -0.5,  0.5, -0.5,  // top-left
-    -0.5,  0.5,  0.5,  // bottom-left
+    -0.5,  0.5,  0.5,   // bottom-left
+    0.5,  0.5,  0.5,    // bottom-right
+    0.5,  0.5, -0.5,    // top-right
+    0.5,  0.5, -0.5,    // top-right
+    -0.5,  0.5, -0.5,   // top-left
+    -0.5,  0.5,  0.5,   // bottom-left
 },
 
 normal_positions: []const gl.Float = &[_]gl.Float{
