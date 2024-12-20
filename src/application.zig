@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const ztracy = @import("ztracy");
 const math = std.math;
 const zgui = @import("zgui");
 const glfw = @import("zglfw");
@@ -218,12 +219,20 @@ pub fn runLoop(self: *Application) !void {
     const dirt_cube_map_texture = try Utils.loadCubemap(dirt);
     const skybox_cube_map_texture = try Utils.loadCubemap(skybox);
 
+    var wireframe: bool = false;
+    var light_direction: [3]f32 = .{ 0.0, -1.0, -1.0 };
+
     // shader configuration
     // --------------------
     shader.use();
     shader.setInt("texture_diffuse1", 0);
     shader.setInt("material.diffuse", 0);
     shader.setInt("material.specular", 1);
+    shader.setVec3f("light.direction",  light_direction);
+    shader.setVec3f("light.ambient",  .{ 0.2, 0.2, 0.2 });
+    shader.setVec3f("light.diffuse",  .{ 0.8, 0.8, 0.8 });
+    shader.setVec3f("light.specular",  .{ 1.0, 1.0, 1.0 });
+    shader.setFloat("material.shininess", 64.0);
 
     skybox_shader.use();
     skybox_shader.setInt("skybox", 0);
@@ -234,9 +243,6 @@ pub fn runLoop(self: *Application) !void {
     // Buffer to store Ortho-projection matrix (in render loop)
     var projection: [16]f32 = undefined;
 
-    var wireframe: bool = false;
-    var light_direction: [3]f32 = .{ 0.0, -1.0, -1.0 };
-
     while (!self.window.shouldClose()) {
         // per-frame time logic
         // --------------------
@@ -244,22 +250,21 @@ pub fn runLoop(self: *Application) !void {
         delta_time = current_frame - last_frame;
         last_frame = current_frame;
 
+        const tz_handle_events = ztracy.ZoneN(@src(), "Application.handleEvents(delta_time)");
         self.handleEvents(delta_time);
+        tz_handle_events.End();
 
         // render
         // ------
         gl.clearColor(0.1, 0.1, 0.1, 1.0);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
+        const tz_draw_voxels = ztracy.ZoneN(@src(), "Drawing Voxels");
         // draw scene as normal
         shader.use();
-        // const light_x_direction: f32 = @floatCast(@sin(glfw.getTime()) * 0.5);
-        shader.setVec3f("light.direction",  light_direction);
+        const tz_viewPos = ztracy.ZoneN(@src(), "shader.setVec3f(\"viewPos\", camera.getViewPos())");
         shader.setVec3f("viewPos", camera.getViewPos());
-        shader.setVec3f("light.ambient",  .{ 0.2, 0.2, 0.2 });
-        shader.setVec3f("light.diffuse",  .{ 0.8, 0.8, 0.8 });
-        shader.setVec3f("light.specular",  .{ 1.0, 1.0, 1.0 });
-        shader.setFloat("material.shininess", 64.0);
+        tz_viewPos.End();
 
         // TODO: Only change this when view changes 
         // which is whenever the camera moves
@@ -288,7 +293,9 @@ pub fn runLoop(self: *Application) !void {
         gl.bindTexture(gl.TEXTURE_CUBE_MAP, dirt_cube_map_texture);
         gl.drawArraysInstanced(gl.TRIANGLES, 0, 36, @intCast(model_matrices.items.len));
         cubeVAO.unbind();
+        tz_draw_voxels.End();
 
+        const tz_draw_skybox = ztracy.ZoneN(@src(), "Drawing Skybox");
         // draw skybox as last
         skybox_shader.use();
         gl.depthFunc(gl.LEQUAL);  // change depth function so depth test passes when values are equal to depth buffer's content
@@ -306,6 +313,7 @@ pub fn runLoop(self: *Application) !void {
         skyboxVAO.unbind();
         gl.depthFunc(gl.LESS); // set depth function back to default
         gl.cullFace(gl.BACK);  // set cull function back to default
+        tz_draw_skybox.End();
 
         const fb_size = self.window.getFramebufferSize();
         zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));
@@ -313,7 +321,9 @@ pub fn runLoop(self: *Application) !void {
         zgui.setNextWindowSize(.{ .w = 0.0, .h = 0.0, .cond = .first_use_ever });
         if (zgui.begin("Debug Window", .{})) {
             _ = zgui.checkbox("wireframe", .{ .v = &wireframe });
-            _ = zgui.dragFloat3("light direction", .{ .v = &light_direction, .min = -1.0, .max = 1.0, });
+            if (zgui.dragFloat3("light direction", .{ .v = &light_direction, .min = -1.0, .max = 1.0, })) {
+                shader.setVec3f("light.direction",  light_direction);
+            }
         }
         zgui.end();
         zgui.backend.draw();

@@ -27,6 +27,10 @@
             .url = "https://github.com/zig-gamedev/znoise/archive/9c56051ce8aa915a20804e3948875331acefbf20.tar.gz",
             .hash = "12208e16c80366e2a2f8bd3f1c676b09bf47c157f4d0f0d6440555f9b74d8a9d79f7",
         },
+        .ztracy = .{
+            .url = "https://github.com/zig-gamedev/ztracy/archive/0323d27af381e0516d6156098d027601e38917f6.tar.gz",
+            .hash = "122058b9caf1299bcb723b8567999154b18d82e0e896471e10ef56b0e60c6dda59c2",
+        },
     },
     .paths = .{
         "src",

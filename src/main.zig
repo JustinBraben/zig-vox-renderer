@@ -1,9 +1,5 @@
 const std = @import("std");
-const math = std.math;
-const zgui = @import("zgui");
-const glfw = @import("zglfw");
-const zstbi = @import("zstbi");
-const zm = @import("zmath");
+const ztracy = @import("ztracy");
 const Application = @import("application.zig");
 
 pub fn main() !void {
@@ -11,7 +7,11 @@ pub fn main() !void {
     defer _ = gpa_impl.deinit();
     const gpa = gpa_impl.allocator();
 
+    const tracy_zone_app_init = ztracy.ZoneNC(@src(), "Initialize application", 0x00_ff_00_00);
     var app = try Application.init(gpa, .{});
     defer app.deinit();
+    tracy_zone_app_init.End();
+    const tracy_zone = ztracy.ZoneN(@src(), "runLoop");
+    defer tracy_zone.End();
     try app.runLoop();
 }
