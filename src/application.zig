@@ -1,4 +1,5 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const math = std.math;
 const zgui = @import("zgui");
 const glfw = @import("zglfw");
@@ -23,11 +24,12 @@ pub const ConfigOptions = struct {
 };
 
 // Camera
-const camera_pos = zm.loadArr3(.{ 0.0, 0.0, 5.0 });
+const camera_pos = zm.loadArr3(.{ 500.0, 100.0, 500.0 });
 var lastX: f64 = 0.0;
 var lastY: f64 = 0.0;
 var first_mouse = true;
 var camera = Camera.init(camera_pos);
+var toggle_cursor = false;
 
 // Timing
 var delta_time: f32 = 0.0;
@@ -35,10 +37,11 @@ var last_frame: f32 = 0.0;
 
 const Application = @This();
 
+allocator: Allocator,
 window: *glfw.Window,
 config: ConfigOptions,
 
-pub fn init(config: ConfigOptions) !Application {
+pub fn init(gpa: Allocator, config: ConfigOptions) !Application {
     try glfw.init();
     glfw.windowHintTyped(.context_version_major, config.gl_major);
     glfw.windowHintTyped(.context_version_minor, config.gl_minor);
@@ -46,43 +49,49 @@ pub fn init(config: ConfigOptions) !Application {
     glfw.windowHintTyped(.opengl_forward_compat, true);
     glfw.windowHintTyped(.client_api, .opengl_api);
     glfw.windowHintTyped(.doublebuffer, true);
+
+    const window = try glfw.Window.create(config.width, config.height, "Voxel Renderer", null);
+    glfw.makeContextCurrent(window);
+
+    _ = window.setCursorPosCallback(mouse_callback);
+    try zopengl.loadCoreProfile(glfw.getProcAddress, @intCast(config.gl_major), @intCast(config.gl_minor));
+    glfw.swapInterval(1);
+
+    // configure global opengl state
+    // -----------------------------
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.CULL_FACE);
+    gl.enable(gl.MULTISAMPLE);
+
+    zgui.init(gpa);
+    zstbi.init(gpa);
+
     return .{
-        .window = try glfw.Window.create(config.width, config.height, "Voxel Renderer", null),
+        .allocator = gpa,
+        .window = window,
         .config = config,
     };
 }
 
 pub fn deinit(self: *Application) void {
+    zstbi.deinit();
+    zgui.deinit();
     self.window.destroy();
     glfw.terminate();
 }
 
 pub fn runLoop(self: *Application) !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-    var arena_allocator_state = std.heap.ArenaAllocator.init(allocator);
+    var arena_allocator_state = std.heap.ArenaAllocator.init(self.allocator);
     defer arena_allocator_state.deinit();
     const arena = arena_allocator_state.allocator();
 
-    glfw.makeContextCurrent(self.window);
-    _ = self.window.setCursorPosCallback(mouse_callback);
-    try zopengl.loadCoreProfile(glfw.getProcAddress, @intCast(self.config.gl_major), @intCast(self.config.gl_minor));
-    glfw.swapInterval(1);
     self.turnOffMouse();
-
-    zgui.init(allocator);
-    defer zgui.deinit();
-
-    // configure global opengl state
-    // -----------------------------
-    gl.enable(gl.DEPTH_TEST);
 
     // create shader program
     var shader: Shader = Shader.create(arena, "assets/shaders/voxel_instance_vert.glsl", "assets/shaders/voxel_instance_frag.glsl");
     var skybox_shader: Shader = Shader.create(arena, "assets/shaders/skybox_vert.glsl", "assets/shaders/skybox_frag.glsl");
 
-    var model_matrices = std.ArrayList([16]f32).init(allocator);
+    var model_matrices = std.ArrayList([16]f32).init(self.allocator);
     defer model_matrices.deinit();
 
     var rng = std.Random.Xoshiro256.init(@intCast(std.time.timestamp()));
@@ -137,8 +146,8 @@ pub fn runLoop(self: *Application) !void {
     defer instanceVBO.deinit();
 
     // Then in your main function, after creating model_matrices:
-    const flattened_matrices = try Utils.flattenMatrices(model_matrices.items, allocator);
-    defer allocator.free(flattened_matrices);
+    const flattened_matrices = try Utils.flattenMatrices(model_matrices.items, self.allocator);
+    defer self.allocator.free(flattened_matrices);
 
     // Bind VAO and set up instance data
     cubeVAO.bind();
@@ -177,10 +186,6 @@ pub fn runLoop(self: *Application) !void {
     skyboxVAO.enableVertexAttribArray(0);
     skyboxVAO.setVertexAttributePointer(0, 3, gl.FLOAT, gl.FALSE, 3 * @sizeOf(gl.Float), null);
     skyboxVAO.unbind();
-
-    // zstbi: loading an image.
-    zstbi.init(allocator);
-    defer zstbi.deinit();
 
     const dirt = &.{
         "assets/textures/dirt/right.jpg",
@@ -250,7 +255,7 @@ pub fn runLoop(self: *Application) !void {
         // view/projection transformations
         const window_size = self.window.getSize();
         const aspect_ratio: f32 = @as(f32, @floatFromInt(window_size[0])) / @as(f32, @floatFromInt(window_size[1]));
-        const projectionM = zm.perspectiveFovRhGl(Utils.radians(camera.zoom), aspect_ratio, 0.1, 100.0);
+        const projectionM = zm.perspectiveFovRhGl(Utils.radians(camera.zoom), aspect_ratio, 0.1, 1000.0);
         zm.storeMat(&projection, projectionM);
         shader.setMat4f("projection",  projection);
 
@@ -303,6 +308,16 @@ fn handleEvents(self: *Application, deltaTime: f32) void {
         self.window.setShouldClose(true);
     }
 
+    if (self.window.getKey(.c) == .press) {
+        toggle_cursor = !toggle_cursor;
+        if (toggle_cursor) {
+            self.window.setInputMode(.cursor, glfw.Cursor.Mode.normal);
+            return;
+        } else {
+            self.window.setInputMode(.cursor, glfw.Cursor.Mode.disabled);
+        }
+    }
+
     camera.speed_modifier = if (self.window.getKey(.left_shift) == .press) 3.0 else 1.0;
 
     if (self.window.getKey(.w) == .press) {
@@ -329,6 +344,10 @@ fn turnOnMouse(self: *Application) void {
 
 fn mouse_callback(window: *glfw.Window, xposIn: f64, yposIn: f64) callconv(.C) void {
     _ = &window;
+
+    // No camera movement
+    if (toggle_cursor) return;
+
     const xpos: f32 = @floatCast(@trunc(xposIn));
     const ypos: f32 = @floatCast(@trunc(yposIn));
 
@@ -345,92 +364,4 @@ fn mouse_callback(window: *glfw.Window, xposIn: f64, yposIn: f64) callconv(.C) v
     lastY = ypos;
 
     camera.processMouseMovement(xoffset, yoffset, true);
-}
-
-fn loadTexture(path: [:0]const u8, textureID: *c_uint) !void {
-    // var textureID: gl.Uint = undefined;
-    gl.genTextures(1, textureID);
-
-    var texture_image = try zstbi.Image.loadFromFile(path, 0);
-    defer texture_image.deinit();
-
-    const format: gl.Enum = switch (texture_image.num_components) {
-        1 => gl.RED,
-        3 => gl.RGB,
-        4 => gl.RGBA,
-        else => unreachable,
-    };
-
-    std.debug.print("{s} is {}\n", .{path, format});
-
-    gl.bindTexture(gl.TEXTURE_2D, textureID.*);
-    // Generate the textureID
-    gl.texImage2D(
-        gl.TEXTURE_2D, 
-        0, 
-        format, 
-        @as(c_int, @intCast(texture_image.width)), 
-        @as(c_int, @intCast(texture_image.height)), 
-        0, 
-        format, 
-        gl.UNSIGNED_BYTE, 
-        @ptrCast(texture_image.data));
-    gl.generateMipmap(gl.TEXTURE_2D);
-
-    // set the texture1 wrapping parameters
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT); // set texture wrapping to GL_REPEAT (default wrapping method)
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
-    // set textureID filtering parameters
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-}
-
-/// loads a cubemap texture from 6 individual texture faces
-/// order:
-/// +X (right)
-/// -X (left)
-/// +Y (top)
-/// -Y (bottom)
-/// +Z (front) 
-/// -Z (back)
-fn loadCubemap(faces: []const [:0]const u8, textureID: *c_uint) !void {
-    // var textureID: gl.Uint = undefined;
-    gl.genTextures(1, textureID);
-    gl.bindTexture(gl.TEXTURE_CUBE_MAP, textureID.*);
-
-    for (faces, 0..) |face, i| {
-        var texture_image = try zstbi.Image.loadFromFile(face, 0);
-        defer texture_image.deinit();
-
-        const format: gl.Enum = switch (texture_image.num_components) {
-            1 => gl.RED,
-            3 => gl.RGB,
-            4 => gl.RGBA,
-            else => unreachable,
-        };
-
-        // Generate the textureID
-        gl.texImage2D(
-            gl.TEXTURE_CUBE_MAP_POSITIVE_X + @as(c_uint, @intCast(i)), 
-            0, 
-            format, 
-            @as(c_int, @intCast(texture_image.width)), 
-            @as(c_int, @intCast(texture_image.height)), 
-            0, 
-            format, 
-            gl.UNSIGNED_BYTE, 
-            @ptrCast(texture_image.data));
-        gl.generateMipmap(gl.TEXTURE_2D);
-
-    }
-
-    // std.debug.print("{s} is {}\n", .{path, format});
-
-    // set the texture1 wrapping parameters
-
-    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
 }
