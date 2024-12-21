@@ -262,6 +262,7 @@ pub fn runLoop(self: *Application) !void {
         const tz_draw_voxels = ztracy.ZoneN(@src(), "Drawing Voxels");
         // draw scene as normal
         shader.use();
+        shader.setVec3f("light.direction",  light_direction);
         const tz_viewPos = ztracy.ZoneN(@src(), "shader.setVec3f(\"viewPos\", camera.getViewPos())");
         shader.setVec3f("viewPos", camera.getViewPos());
         tz_viewPos.End();
