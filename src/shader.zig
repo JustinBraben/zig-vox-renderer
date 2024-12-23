@@ -1,4 +1,5 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const zopengl = @import("zopengl");
 const gl = zopengl.bindings;
 const Shader = @This();
@@ -6,7 +7,10 @@ const Shader = @This();
 // The program ID
 ID: c_uint,
 
-pub fn create(arena: std.mem.Allocator, vs_path: []const u8, fs_path: []const u8) Shader {
+pub fn create(gpa: Allocator, vs_path: []const u8, fs_path: []const u8) Shader {
+    var arena_allocator_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_allocator_state.deinit();
+    const arena = arena_allocator_state.allocator();
 
     // Create vertex shader
     var vertexShader: c_uint = undefined;

@@ -85,15 +85,7 @@ pub fn deinit(self: *Application) void {
 }
 
 pub fn runLoop(self: *Application) !void {
-    var arena_allocator_state = std.heap.ArenaAllocator.init(self.allocator);
-    defer arena_allocator_state.deinit();
-    const arena = arena_allocator_state.allocator();
-
     self.turnOffMouse();
-
-    // create shader program
-    var shader: Shader = Shader.create(arena, "assets/shaders/voxel_instance_vert.glsl", "assets/shaders/voxel_instance_frag.glsl");
-    var skybox_shader: Shader = Shader.create(arena, "assets/shaders/skybox_vert.glsl", "assets/shaders/skybox_frag.glsl");
 
     var model_matrices = std.ArrayList([16]f32).init(self.allocator);
     defer model_matrices.deinit();
@@ -116,10 +108,11 @@ pub fn runLoop(self: *Application) !void {
         }
     }
 
-    // // set up vertex data (and buffer(s)) and configure vertex attributes
-    // // ------------------------------------------------------------------
-    const cube_mesh: CubeMesh = .{};
-    const skybox_mesh: SkyboxMesh = .{};
+    // set up vertex data (and buffer(s)) and configure vertex attributes
+    // ------------------------------------------------------------------
+    // Pass it the vertex shader and fragment shader
+    const cube_mesh = CubeMesh.init(self.allocator, "assets/shaders/voxel_instance_vert.glsl", "assets/shaders/voxel_instance_frag.glsl");
+    const skybox_mesh = SkyboxMesh.init(self.allocator, "assets/shaders/skybox_vert.glsl", "assets/shaders/skybox_frag.glsl");
 
     // cube VAO
     var cubeVAO = try VAO.init();
@@ -225,17 +218,17 @@ pub fn runLoop(self: *Application) !void {
 
     // shader configuration
     // --------------------
-    shader.use();
-    shader.setInt("texture_diffuse1", 0);
-    shader.setInt("material.diffuse", 0);
-    shader.setInt("material.specular", 1);
-    shader.setVec3f("light.direction",  light_direction);
-    shader.setVec3f("light.ambient",  .{ 0.2, 0.2, 0.2 });
-    shader.setVec3f("light.diffuse",  .{ 0.8, 0.8, 0.8 });
-    shader.setVec3f("light.specular",  .{ 1.0, 1.0, 1.0 });
+    cube_mesh.shader.use();
+    cube_mesh.shader.setInt("texture_diffuse1", 0);
+    cube_mesh.shader.setInt("material.diffuse", 0);
+    cube_mesh.shader.setInt("material.specular", 1);
+    cube_mesh.shader.setVec3f("light.direction",  light_direction);
+    cube_mesh.shader.setVec3f("light.ambient",  .{ 0.2, 0.2, 0.2 });
+    cube_mesh.shader.setVec3f("light.diffuse",  .{ 0.8, 0.8, 0.8 });
+    cube_mesh.shader.setVec3f("light.specular",  .{ 1.0, 1.0, 1.0 });
 
-    skybox_shader.use();
-    skybox_shader.setInt("skybox", 0);
+    skybox_mesh.shader.use();
+    skybox_mesh.shader.setInt("skybox", 0);
 
     // View matrix
     var view: [16]f32 = undefined;
@@ -261,18 +254,18 @@ pub fn runLoop(self: *Application) !void {
 
         const tz_draw_voxels = ztracy.ZoneN(@src(), "Drawing Voxels");
         // draw scene as normal
-        shader.use();
-        shader.setVec3f("light.direction",  light_direction);
-        shader.setFloat("material.shininess", shininess);
-        const tz_viewPos = ztracy.ZoneN(@src(), "shader.setVec3f(\"viewPos\", camera.getViewPos())");
-        shader.setVec3f("viewPos", camera.getViewPos());
+        cube_mesh.shader.use();
+        cube_mesh.shader.setVec3f("light.direction",  light_direction);
+        cube_mesh.shader.setFloat("material.shininess", shininess);
+        const tz_viewPos = ztracy.ZoneN(@src(), "cube_mesh.shader.setVec3f(\"viewPos\", camera.getViewPos())");
+        cube_mesh.shader.setVec3f("viewPos", camera.getViewPos());
         tz_viewPos.End();
 
         // TODO: Only change this when view changes 
         // which is whenever the camera moves
         var viewM = camera.getViewMatrix();
         zm.storeMat(&view, viewM);
-        shader.setMat4f("view", view);
+        cube_mesh.shader.setMat4f("view", view);
 
         // TODO: This projection could just be calculated up front 
         // and only recalculated when 
@@ -281,7 +274,7 @@ pub fn runLoop(self: *Application) !void {
         const aspect_ratio: f32 = @as(f32, @floatFromInt(window_size[0])) / @as(f32, @floatFromInt(window_size[1]));
         const projectionM = zm.perspectiveFovRhGl(Utils.radians(camera.zoom), aspect_ratio, 0.1, 1000.0);
         zm.storeMat(&projection, projectionM);
-        shader.setMat4f("projection",  projection);
+        cube_mesh.shader.setMat4f("projection",  projection);
 
         if (wireframe) {
             gl.polygonMode(gl.FRONT_AND_BACK, gl.LINE);
@@ -299,13 +292,13 @@ pub fn runLoop(self: *Application) !void {
 
         const tz_draw_skybox = ztracy.ZoneN(@src(), "Drawing Skybox");
         // draw skybox as last
-        skybox_shader.use();
+        skybox_mesh.shader.use();
         gl.depthFunc(gl.LEQUAL);  // change depth function so depth test passes when values are equal to depth buffer's content
         gl.cullFace(gl.FRONT);
         viewM = zm.loadMat34(&view);
         zm.storeMat(&view, viewM);
-        skybox_shader.setMat4f("view", view);
-        skybox_shader.setMat4f("projection", projection);
+        skybox_mesh.shader.setMat4f("view", view);
+        skybox_mesh.shader.setMat4f("projection", projection);
 
         // skybox cube
         skyboxVAO.bind();
@@ -325,7 +318,7 @@ pub fn runLoop(self: *Application) !void {
             _ = zgui.checkbox("wireframe", .{ .v = &wireframe });
             _ = zgui.dragFloat("shininess", .{ .v = &shininess, .min = 16.0, .max = 128.0 });
             if (zgui.dragFloat3("light direction", .{ .v = &light_direction, .min = -1.0, .max = 1.0, })) {
-                shader.setVec3f("light.direction",  light_direction);
+                cube_mesh.shader.setVec3f("light.direction",  light_direction);
             }
         }
         zgui.end();
@@ -375,9 +368,7 @@ fn turnOnMouse(self: *Application) void {
     self.window.setInputMode(.cursor, glfw.Cursor.Mode.normal);
 }
 
-fn mouse_callback(window: *glfw.Window, xposIn: f64, yposIn: f64) callconv(.C) void {
-    _ = &window;
-
+fn mouse_callback(_: *glfw.Window, xposIn: f64, yposIn: f64) callconv(.C) void {
     // No camera movement
     if (toggle_cursor) return;
 
