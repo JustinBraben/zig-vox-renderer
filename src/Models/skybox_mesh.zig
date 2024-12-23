@@ -130,8 +130,3 @@ pub fn addVBO(self: *SkyboxMesh, size: gl.Int, data: []const gl.Float) !void {
     self.vao.setVertexAttributePointer(@intCast(self.buffers.items.len), size, gl.FLOAT, gl.FALSE, size * @sizeOf(gl.Float), null);
     try self.buffers.append(vbo);
 }
-
-// skyboxVBO.bind(gl.ARRAY_BUFFER);
-// skyboxVBO.bufferData(gl.ARRAY_BUFFER, skybox_mesh.vertex_positions, gl.STATIC_DRAW);
-// skyboxVAO.enableVertexAttribArray(0);
-// skyboxVAO.setVertexAttributePointer(0, 3, gl.FLOAT, gl.FALSE, 3 * @sizeOf(gl.Float), null);
