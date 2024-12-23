@@ -6,7 +6,7 @@ const VAO = @This();
 
 id: gl.Uint,
 
-pub fn init() !VAO {
+pub fn init() VAO {
     var vao: gl.Uint = undefined;
     gl.genVertexArrays(1, &vao);
     return .{ .id = vao };
@@ -20,13 +20,13 @@ pub fn bind(self: *VAO) void {
     gl.bindVertexArray(self.id);
 }
 
-pub fn unbind(self: *VAO) void {
-    _ = &self;
+pub fn unbind(_: *VAO) void {
     gl.bindVertexArray(0);
 }
 
+// self is not used directly in the OpenGL call
 pub fn setVertexAttributePointer(
-    self: *VAO,
+    _: *VAO,
     index: gl.Uint,
     size: gl.Int,
     type_: gl.Enum,
@@ -34,7 +34,6 @@ pub fn setVertexAttributePointer(
     stride: gl.Sizei,
     offset: ?*const anyopaque
 ) void {
-    _ = &self; // self is not used directly in the OpenGL call
     gl.vertexAttribPointer(
         index, 
         size, 
@@ -45,7 +44,7 @@ pub fn setVertexAttributePointer(
     );
 }
 
-pub fn enableVertexAttribArray(self: *VAO, index: gl.Uint) void {
-    _ = self; // self is not used directly in the OpenGL call
+// self is not used directly in the OpenGL call
+pub fn enableVertexAttribArray(_: *VAO, index: gl.Uint) void {
     gl.enableVertexAttribArray(index);
 }

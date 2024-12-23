@@ -8,7 +8,6 @@ const zopengl = @import("zopengl");
 const zstbi = @import("zstbi");
 const zm = @import("zmath");
 const gl = zopengl.bindings;
-const znoise = @import("znoise");
 const Camera = @import("camera.zig");
 const Shader = @import("shader.zig");
 const Utils = @import("utils.zig");
@@ -96,82 +95,21 @@ pub fn runLoop(self: *Application) !void {
     // set up vertex data (and buffer(s)) and configure vertex attributes
     // ------------------------------------------------------------------
     // Pass it the vertex shader and fragment shader
-    const cube_mesh = CubeMesh.init(self.allocator, "assets/shaders/voxel_instance_vert.glsl", "assets/shaders/voxel_instance_frag.glsl");
-    const skybox_mesh = SkyboxMesh.init(self.allocator, "assets/shaders/skybox_vert.glsl", "assets/shaders/skybox_frag.glsl");
+    var cube_mesh = CubeMesh.init(self.allocator, "assets/shaders/voxel_instance_vert.glsl", "assets/shaders/voxel_instance_frag.glsl");
+    defer cube_mesh.deinit();
 
-    // cube VAO
-    var cubeVAO = try VAO.init();
-    defer cubeVAO.deinit();
+    cube_mesh.bindVAO();
+    try cube_mesh.addVBO(3, cube_mesh.vertex_positions);
+    try cube_mesh.addVBO(3, cube_mesh.normal_positions);
+    try cube_mesh.addVBO(2, cube_mesh.texture_coords);
+    try cube_mesh.addInstanceVBO(4, world.flattened_matrices);
+    cube_mesh.unbindVAO();
 
-    // Create two separate VBOs - one for positions, one for texture coordinates
-    var positionVBO = try VBO.init();
-    defer positionVBO.deinit();
-    var normalVBO = try VBO.init();
-    defer normalVBO.deinit();
-    var texCoordVBO = try VBO.init();
-    defer texCoordVBO.deinit();
-
-    // Buffer vertex position data
-    cubeVAO.bind();
-    positionVBO.bind(gl.ARRAY_BUFFER);
-    positionVBO.bufferData(gl.ARRAY_BUFFER, cube_mesh.vertex_positions, gl.STATIC_DRAW);
-    cubeVAO.enableVertexAttribArray(0);
-    cubeVAO.setVertexAttributePointer(0, 3, gl.FLOAT, gl.FALSE, 3 * @sizeOf(gl.Float), null);
-
-    // Buffer normal position data
-    normalVBO.bind(gl.ARRAY_BUFFER);
-    normalVBO.bufferData(gl.ARRAY_BUFFER, cube_mesh.normal_positions, gl.STATIC_DRAW);
-    cubeVAO.enableVertexAttribArray(1);
-    cubeVAO.setVertexAttributePointer(1, 3, gl.FLOAT, gl.FALSE, 3 * @sizeOf(gl.Float), null);
-
-    // Buffer texture coordinate data
-    texCoordVBO.bind(gl.ARRAY_BUFFER);
-    texCoordVBO.bufferData(gl.ARRAY_BUFFER, cube_mesh.texture_coords, gl.STATIC_DRAW);
-    cubeVAO.enableVertexAttribArray(2);
-    cubeVAO.setVertexAttributePointer(2, 2, gl.FLOAT, gl.FALSE, 2 * @sizeOf(gl.Float), null);
-    cubeVAO.unbind();
-
-    // Add this after your cube VAO/VBO setup code:
-    var instanceVBO = try VBO.init();
-    defer instanceVBO.deinit();
-
-    // Bind VAO and set up instance data
-    cubeVAO.bind();
-    instanceVBO.bind(gl.ARRAY_BUFFER);
-    instanceVBO.bufferData(gl.ARRAY_BUFFER, world.flattened_matrices, gl.STATIC_DRAW);
-
-    // Set up instance matrix attribute pointers (location 2-5 for mat4)
-    const vec4Size = 4 * @sizeOf(gl.Float);
-    const mat4Size = 4 * vec4Size;
-
-    cubeVAO.enableVertexAttribArray(3);
-    gl.vertexAttribPointer(3, 4, gl.FLOAT, gl.FALSE, mat4Size, null);
-    cubeVAO.enableVertexAttribArray(4);
-    gl.vertexAttribPointer(4, 4, gl.FLOAT, gl.FALSE, mat4Size, @ptrFromInt(vec4Size));
-    cubeVAO.enableVertexAttribArray(5);
-    gl.vertexAttribPointer(5, 4, gl.FLOAT, gl.FALSE, mat4Size, @ptrFromInt(2 * vec4Size));
-    cubeVAO.enableVertexAttribArray(6);
-    gl.vertexAttribPointer(6, 4, gl.FLOAT, gl.FALSE, mat4Size, @ptrFromInt(3 * vec4Size));
-
-    gl.vertexAttribDivisor(3, 1);
-    gl.vertexAttribDivisor(4, 1);
-    gl.vertexAttribDivisor(5, 1);
-    gl.vertexAttribDivisor(6, 1);
-
-    cubeVAO.unbind();
-
-    // skybox VAO
-    var skyboxVAO = try VAO.init();
-    defer skyboxVAO.deinit();
-    var skyboxVBO = try VBO.init();
-    defer skyboxVBO.deinit();
-
-    skyboxVAO.bind();
-    skyboxVBO.bind(gl.ARRAY_BUFFER);
-    skyboxVBO.bufferData(gl.ARRAY_BUFFER, skybox_mesh.vertex_positions, gl.STATIC_DRAW);
-    skyboxVAO.enableVertexAttribArray(0);
-    skyboxVAO.setVertexAttributePointer(0, 3, gl.FLOAT, gl.FALSE, 3 * @sizeOf(gl.Float), null);
-    skyboxVAO.unbind();
+    var skybox_mesh = SkyboxMesh.init(self.allocator, "assets/shaders/skybox_vert.glsl", "assets/shaders/skybox_frag.glsl");
+    defer skybox_mesh.deinit();
+    skybox_mesh.bindVAO();
+    try skybox_mesh.addVBO(3, skybox_mesh.vertex_positions);
+    skybox_mesh.unbindVAO();
 
     const dirt = &.{
         "assets/textures/dirt/right.jpg",
@@ -264,14 +202,13 @@ pub fn runLoop(self: *Application) !void {
         }
 
         // cubes
-        cubeVAO.bind();
+        cube_mesh.bindVAO();
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_CUBE_MAP, dirt_cube_map_texture);
         gl.drawArraysInstanced(gl.TRIANGLES, 0, 36, @intCast(world.model_matrices.items.len));
-        cubeVAO.unbind();
+        cube_mesh.unbindVAO();
         tz_draw_voxels.End();
 
-        const tz_draw_skybox = ztracy.ZoneN(@src(), "Drawing Skybox");
         // draw skybox as last
         skybox_mesh.shader.use();
         gl.depthFunc(gl.LEQUAL);  // change depth function so depth test passes when values are equal to depth buffer's content
@@ -282,14 +219,13 @@ pub fn runLoop(self: *Application) !void {
         skybox_mesh.shader.setMat4f("projection", projection);
 
         // skybox cube
-        skyboxVAO.bind();
+        skybox_mesh.bindVAO();
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_CUBE_MAP, skybox_cube_map_texture);
         gl.drawArrays(gl.TRIANGLES, 0, 36);
-        skyboxVAO.unbind();
+        skybox_mesh.unbindVAO();
         gl.depthFunc(gl.LESS); // set depth function back to default
         gl.cullFace(gl.BACK);  // set cull function back to default
-        tz_draw_skybox.End();
 
         const fb_size = self.window.getFramebufferSize();
         zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));
