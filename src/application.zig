@@ -221,6 +221,7 @@ pub fn runLoop(self: *Application) !void {
 
     var wireframe: bool = false;
     var light_direction: [3]f32 = .{ 0.0, -1.0, -1.0 };
+    var shininess: f32 = 32.0;
 
     // shader configuration
     // --------------------
@@ -232,7 +233,6 @@ pub fn runLoop(self: *Application) !void {
     shader.setVec3f("light.ambient",  .{ 0.2, 0.2, 0.2 });
     shader.setVec3f("light.diffuse",  .{ 0.8, 0.8, 0.8 });
     shader.setVec3f("light.specular",  .{ 1.0, 1.0, 1.0 });
-    shader.setFloat("material.shininess", 64.0);
 
     skybox_shader.use();
     skybox_shader.setInt("skybox", 0);
@@ -263,6 +263,7 @@ pub fn runLoop(self: *Application) !void {
         // draw scene as normal
         shader.use();
         shader.setVec3f("light.direction",  light_direction);
+        shader.setFloat("material.shininess", shininess);
         const tz_viewPos = ztracy.ZoneN(@src(), "shader.setVec3f(\"viewPos\", camera.getViewPos())");
         shader.setVec3f("viewPos", camera.getViewPos());
         tz_viewPos.End();
@@ -322,6 +323,7 @@ pub fn runLoop(self: *Application) !void {
         zgui.setNextWindowSize(.{ .w = 0.0, .h = 0.0, .cond = .first_use_ever });
         if (zgui.begin("Debug Window", .{})) {
             _ = zgui.checkbox("wireframe", .{ .v = &wireframe });
+            _ = zgui.dragFloat("shininess", .{ .v = &shininess, .min = 16.0, .max = 128.0 });
             if (zgui.dragFloat3("light direction", .{ .v = &light_direction, .min = -1.0, .max = 1.0, })) {
                 shader.setVec3f("light.direction",  light_direction);
             }
