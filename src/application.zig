@@ -16,6 +16,7 @@ const VAO = @import("vao.zig");
 const VBO = @import("vbo.zig");
 const CubeMesh = @import("Models/cube_mesh.zig");
 const SkyboxMesh = @import("Models/skybox_mesh.zig");
+const World = @import("World/world.zig");
 
 pub const ConfigOptions = struct {
     width: i32 = 1280,
@@ -87,26 +88,10 @@ pub fn deinit(self: *Application) void {
 pub fn runLoop(self: *Application) !void {
     self.turnOffMouse();
 
-    var model_matrices = std.ArrayList([16]f32).init(self.allocator);
-    defer model_matrices.deinit();
-
-    var rng = std.Random.Xoshiro256.init(@intCast(std.time.timestamp()));
-    const seed = rng.random().int(i32);
-    const gen = znoise.FnlGenerator{
-        .seed = @intCast(seed)
-    };
     const height_range = 10.0;
-    for (0..1000) |x_pos| {
-        for (0..1000) |z_pos| {
-            const x = @mod(@as(f32, @floatFromInt(x_pos)), 1000.0);
-            const z = @mod(@as(f32, @floatFromInt(z_pos)), 1000.0);
-
-            const y = @floor(gen.noise2(x, z) * height_range);
-
-            const position = zm.translation(x, y, z);
-            try model_matrices.append(zm.matToArr(position));
-        }
-    }
+    var world = try World.init(self.allocator, height_range);
+    try world.generate();
+    defer world.deinit();
 
     // set up vertex data (and buffer(s)) and configure vertex attributes
     // ------------------------------------------------------------------
@@ -150,14 +135,10 @@ pub fn runLoop(self: *Application) !void {
     var instanceVBO = try VBO.init();
     defer instanceVBO.deinit();
 
-    // Then in your main function, after creating model_matrices:
-    const flattened_matrices = try Utils.flattenMatrices(model_matrices.items, self.allocator);
-    defer self.allocator.free(flattened_matrices);
-
     // Bind VAO and set up instance data
     cubeVAO.bind();
     instanceVBO.bind(gl.ARRAY_BUFFER);
-    instanceVBO.bufferData(gl.ARRAY_BUFFER, flattened_matrices, gl.STATIC_DRAW);
+    instanceVBO.bufferData(gl.ARRAY_BUFFER, world.flattened_matrices, gl.STATIC_DRAW);
 
     // Set up instance matrix attribute pointers (location 2-5 for mat4)
     const vec4Size = 4 * @sizeOf(gl.Float);
@@ -286,7 +267,7 @@ pub fn runLoop(self: *Application) !void {
         cubeVAO.bind();
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_CUBE_MAP, dirt_cube_map_texture);
-        gl.drawArraysInstanced(gl.TRIANGLES, 0, 36, @intCast(model_matrices.items.len));
+        gl.drawArraysInstanced(gl.TRIANGLES, 0, 36, @intCast(world.model_matrices.items.len));
         cubeVAO.unbind();
         tz_draw_voxels.End();
 
