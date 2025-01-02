@@ -261,7 +261,7 @@ fn handleEvents(self: *Application, deltaTime: f32) void {
         }
     }
 
-    camera.speed_modifier = if (self.window.getKey(.left_shift) == .press) 10.0 else 5.0;
+    camera.speed_modifier = if (self.window.getKey(.left_shift) == .press) 50.0 else 25.0;
 
     if (self.window.getKey(.w) == .press) {
         camera.processKeyboard(.FORWARD, deltaTime);

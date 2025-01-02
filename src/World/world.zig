@@ -46,7 +46,7 @@ pub fn generate(self: *World) !void {
 
     for (0..200) |x_pos| {
         for (0..100) |y_pos| {
-            for (0..10) |z_pos| {
+            for (0..100) |z_pos| {
                 const x = @mod(@as(f32, @floatFromInt(x_pos)), 1000.0);
                 const y = @mod(@as(f32, @floatFromInt(y_pos)), 1000.0);
                 const z = @mod(@as(f32, @floatFromInt(z_pos)), 1000.0);
