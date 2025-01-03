@@ -55,12 +55,17 @@ pub fn init(gpa: Allocator, config: ConfigOptions) !Application {
     glfw.makeContextCurrent(window);
 
     _ = window.setCursorPosCallback(mouse_callback);
+    // gl.enable(gl.DEBUG_OUTPUT);
+    // gl.debugMessageControl(gl.DONT_CARE, gl.DONT_CARE, gl.DEBUG_SEVERITY_NOTIFICATION, 0, null, gl.FALSE);
+    // gl.debugMessageCallback(message_callback, null);
     try zopengl.loadCoreProfile(glfw.getProcAddress, @intCast(config.gl_major), @intCast(config.gl_minor));
     glfw.swapInterval(1);
 
     // configure global opengl state
     // -----------------------------
     gl.enable(gl.DEPTH_TEST);
+    gl.frontFace(gl.CCW);
+    gl.cullFace(gl.BACK);
     gl.enable(gl.CULL_FACE);
     gl.enable(gl.MULTISAMPLE);
     gl.enable(gl.TEXTURE_CUBE_MAP_SEAMLESS);
@@ -305,4 +310,35 @@ fn mouse_callback(_: *glfw.Window, xposIn: f64, yposIn: f64) callconv(.C) void {
     lastY = ypos;
 
     camera.processMouseMovement(xoffset, yoffset, true);
+}
+
+fn message_callback(
+    source: gl.Enum,
+    d_type: gl.Enum,
+    id: gl.Uint,
+    severity: gl.Enum,
+    length: gl.Sizei,
+    message: [*c]const gl.Char,
+    userParam: *const anyopaque,
+) callconv(.C) void {
+    _ = source;
+    _ = id;
+    _ = length;
+    _ = userParam;
+    const SEVERITY = switch (severity) {
+        gl.DEBUG_SEVERITY_LOW => "LOW",
+        gl.DEBUG_SEVERITY_MEDIUM => "MEDIUM",
+        gl.DEBUG_SEVERITY_HIGH => "HIGH",
+        gl.DEBUG_SEVERITY_NOTIFICATION => "NOTIFICATION",
+        else => unreachable,
+    };
+
+    const debug_type_error = if (d_type == gl.DEBUG_TYPE_ERROR) "** GL ERROR **" else "";
+
+    std.debug.print("GL CALLBACK: {s} type, severity = {s}, message = {s}\n", 
+    .{
+        debug_type_error,
+        SEVERITY, 
+        message
+    });
 }
