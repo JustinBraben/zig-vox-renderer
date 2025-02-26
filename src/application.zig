@@ -17,6 +17,7 @@ const CubeMesh = @import("Models/cube_mesh.zig");
 const SkyboxMesh = @import("Models/skybox_mesh.zig");
 const Mesh = @import("Models/mesh.zig");
 const World = @import("World/world.zig");
+const Chunk = @import("World/chunk.zig");
 
 pub const ConfigOptions = struct {
     width: i32 = 1280,
@@ -105,6 +106,13 @@ pub fn runLoop(self: *Application) !void {
     // try cube_mesh.addVBO(2, cube_mesh.texture_coords);
     // try cube_mesh.addInstanceVBO(4, world.flattened_matrices);
     // cube_mesh.unbindVAO();
+
+    var basic_chunk = try Chunk.init(self.allocator, .{ .x = 0, .z = -1 });
+    defer basic_chunk.deinit();
+    basic_chunk.setBlock(1, 1, 1, .{ .id = 1 });
+    basic_chunk.setBlock(5, 5, 5, .{ .id = 1 });
+    basic_chunk.setBlock(6, 6, 6, .{ .id = 1 });
+    try basic_chunk.generateMesh();
 
     var basic_voxel_mesh = Mesh.init();
     defer basic_voxel_mesh.deinit();
@@ -225,6 +233,34 @@ pub fn runLoop(self: *Application) !void {
         gl.bindTexture(gl.TEXTURE_CUBE_MAP, dirt_cube_map_texture);
         basic_voxel_mesh.draw();
         basic_voxel_mesh.vao.unbind();
+
+        // Render one chunk
+        if (basic_chunk.mesh) |*mesh| {
+            // Calculate the chunk's world position model matrix
+            const chunk_offset = basic_chunk.pos.worldOffset();
+            // const chunk_model = zm.mul(
+            //     zm.scaling(16, 1.0, 16), 
+            //     zm.translation(
+            //         chunk_offset[0],
+            //         0.0,
+            //         chunk_offset[2])
+            // );
+
+            const chunk_model = zm.translation(
+                chunk_offset[0],
+                0.0,
+                chunk_offset[2]
+            );
+            
+            // Set the model matrix for the chunk
+            basic_voxel_mesh_shader.setMat4f("u_model", zm.matToArr(chunk_model));
+
+            mesh.vao.bind();
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_CUBE_MAP, dirt_cube_map_texture);
+            mesh.draw();
+            mesh.vao.unbind();
+        }
 
         // draw skybox as last
         skybox_mesh.shader.use();

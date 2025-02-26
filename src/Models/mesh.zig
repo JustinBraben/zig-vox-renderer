@@ -9,7 +9,7 @@ const VBO = @import("../vbo.zig");
 const Mesh = @This();
 
 // Vertex data for a single block face
-const Vertex = struct {
+pub const Vertex = struct {
     position: [3]gl.Float,
     normal: [3]gl.Float,
     uv: [2]gl.Float,
@@ -76,55 +76,191 @@ pub fn draw(self: *Mesh) void {
 }
 
 pub fn setBasicVoxel(self: *Mesh) void {
-    const vertices = [_]Vertex{
-        // Back face (CCW winding)
-        .{ .position = [_]f32{ 0.5, -0.5, -0.5}, .normal = [_]f32{0.0, 0.0, -1.0}, .uv = [_]f32{0.0, 0.0} }, // bottom-left
-        .{ .position = [_]f32{-0.5, -0.5, -0.5}, .normal = [_]f32{0.0, 0.0, -1.0}, .uv = [_]f32{1.0, 0.0} }, // bottom-right
-        .{ .position = [_]f32{-0.5,  0.5, -0.5}, .normal = [_]f32{0.0, 0.0, -1.0}, .uv = [_]f32{1.0, 1.0} }, // top-right
-        .{ .position = [_]f32{-0.5,  0.5, -0.5}, .normal = [_]f32{0.0, 0.0, -1.0}, .uv = [_]f32{1.0, 1.0} }, // top-right
-        .{ .position = [_]f32{ 0.5,  0.5, -0.5}, .normal = [_]f32{0.0, 0.0, -1.0}, .uv = [_]f32{0.0, 1.0} }, // top-left
-        .{ .position = [_]f32{ 0.5, -0.5, -0.5}, .normal = [_]f32{0.0, 0.0, -1.0}, .uv = [_]f32{0.0, 0.0} }, // bottom-left
-
-        // Front face (CCW winding)
-        .{ .position = [_]f32{-0.5, -0.5,  0.5}, .normal = [_]f32{0.0, 0.0, 1.0}, .uv = [_]f32{0.0, 0.0} }, // bottom-left
-        .{ .position = [_]f32{ 0.5, -0.5,  0.5}, .normal = [_]f32{0.0, 0.0, 1.0}, .uv = [_]f32{1.0, 0.0} }, // bottom-right
-        .{ .position = [_]f32{ 0.5,  0.5,  0.5}, .normal = [_]f32{0.0, 0.0, 1.0}, .uv = [_]f32{1.0, 1.0} }, // top-right
-        .{ .position = [_]f32{ 0.5,  0.5,  0.5}, .normal = [_]f32{0.0, 0.0, 1.0}, .uv = [_]f32{1.0, 1.0} }, // top-right
-        .{ .position = [_]f32{-0.5,  0.5,  0.5}, .normal = [_]f32{0.0, 0.0, 1.0}, .uv = [_]f32{0.0, 1.0} }, // top-left
-        .{ .position = [_]f32{-0.5, -0.5,  0.5}, .normal = [_]f32{0.0, 0.0, 1.0}, .uv = [_]f32{0.0, 0.0} }, // bottom-left
-
-        // Left face (CCW)
-        .{ .position = [_]f32{-0.5, -0.5, -0.5}, .normal = [_]f32{-1.0, 0.0, 0.0}, .uv = [_]f32{1.0, 0.0} }, // bottom-left
-        .{ .position = [_]f32{-0.5, -0.5,  0.5}, .normal = [_]f32{-1.0, 0.0, 0.0}, .uv = [_]f32{1.0, 1.0} }, // bottom-right
-        .{ .position = [_]f32{-0.5,  0.5,  0.5}, .normal = [_]f32{-1.0, 0.0, 0.0}, .uv = [_]f32{0.0, 1.0} }, // top-right
-        .{ .position = [_]f32{-0.5,  0.5,  0.5}, .normal = [_]f32{-1.0, 0.0, 0.0}, .uv = [_]f32{0.0, 1.0} }, // top-right
-        .{ .position = [_]f32{-0.5,  0.5, -0.5}, .normal = [_]f32{-1.0, 0.0, 0.0}, .uv = [_]f32{0.0, 0.0} }, // top-left
-        .{ .position = [_]f32{-0.5, -0.5, -0.5}, .normal = [_]f32{-1.0, 0.0, 0.0}, .uv = [_]f32{1.0, 0.0} }, // bottom-left
-
-        // Right face (CCW)
-        .{ .position = [_]f32{ 0.5, -0.5,  0.5}, .normal = [_]f32{1.0, 0.0, 0.0}, .uv = [_]f32{1.0, 0.0} }, // bottom-left
-        .{ .position = [_]f32{ 0.5, -0.5, -0.5}, .normal = [_]f32{1.0, 0.0, 0.0}, .uv = [_]f32{1.0, 1.0} }, // bottom-right
-        .{ .position = [_]f32{ 0.5,  0.5, -0.5}, .normal = [_]f32{1.0, 0.0, 0.0}, .uv = [_]f32{0.0, 1.0} }, // top-right
-        .{ .position = [_]f32{ 0.5,  0.5, -0.5}, .normal = [_]f32{1.0, 0.0, 0.0}, .uv = [_]f32{0.0, 1.0} }, // top-right
-        .{ .position = [_]f32{ 0.5,  0.5,  0.5}, .normal = [_]f32{1.0, 0.0, 0.0}, .uv = [_]f32{0.0, 0.0} }, // top-left
-        .{ .position = [_]f32{ 0.5, -0.5,  0.5}, .normal = [_]f32{1.0, 0.0, 0.0}, .uv = [_]f32{1.0, 0.0} }, // bottom-left
-
-        // Bottom face (CCW)      
-        .{ .position = [_]f32{-0.5, -0.5, -0.5}, .normal = [_]f32{0.0, -1.0, 0.0}, .uv = [_]f32{0.0, 1.0} }, // bottom-left
-        .{ .position = [_]f32{ 0.5, -0.5, -0.5}, .normal = [_]f32{0.0, -1.0, 0.0}, .uv = [_]f32{1.0, 1.0} }, // bottom-right
-        .{ .position = [_]f32{ 0.5, -0.5,  0.5}, .normal = [_]f32{0.0, -1.0, 0.0}, .uv = [_]f32{1.0, 0.0} }, // top-right
-        .{ .position = [_]f32{ 0.5, -0.5,  0.5}, .normal = [_]f32{0.0, -1.0, 0.0}, .uv = [_]f32{1.0, 0.0} }, // top-right
-        .{ .position = [_]f32{-0.5, -0.5,  0.5}, .normal = [_]f32{0.0, -1.0, 0.0}, .uv = [_]f32{0.0, 0.0} }, // top-left
-        .{ .position = [_]f32{-0.5, -0.5, -0.5}, .normal = [_]f32{0.0, -1.0, 0.0}, .uv = [_]f32{0.0, 1.0} }, // bottom-left
-
-        // Top face (CCW)
-        .{ .position = [_]f32{-0.5,  0.5,  0.5}, .normal = [_]f32{0.0, 1.0, 0.0}, .uv = [_]f32{0.0, 1.0} }, // bottom-left
-        .{ .position = [_]f32{ 0.5,  0.5,  0.5}, .normal = [_]f32{0.0, 1.0, 0.0}, .uv = [_]f32{1.0, 1.0} }, // bottom-right
-        .{ .position = [_]f32{ 0.5,  0.5, -0.5}, .normal = [_]f32{0.0, 1.0, 0.0}, .uv = [_]f32{1.0, 0.0} }, // top-right
-        .{ .position = [_]f32{ 0.5,  0.5, -0.5}, .normal = [_]f32{0.0, 1.0, 0.0}, .uv = [_]f32{1.0, 0.0} }, // top-right
-        .{ .position = [_]f32{-0.5,  0.5, -0.5}, .normal = [_]f32{0.0, 1.0, 0.0}, .uv = [_]f32{0.0, 0.0} }, // top-left
-        .{ .position = [_]f32{-0.5,  0.5,  0.5}, .normal = [_]f32{0.0, 1.0, 0.0}, .uv = [_]f32{0.0, 1.0} }, // bottom-left
-    };
+    const vertices = basic_voxel_vertices;
 
     self.uploadData(&vertices);
 }
+
+pub const basic_voxel_vertices = [_]Vertex{
+    // Back face (CCW winding)
+    .{ .position = [_]f32{ 0.5, -0.5, -0.5}, .normal = [_]f32{0.0, 0.0, -1.0}, .uv = [_]f32{0.0, 0.0} }, // bottom-left
+    .{ .position = [_]f32{-0.5, -0.5, -0.5}, .normal = [_]f32{0.0, 0.0, -1.0}, .uv = [_]f32{1.0, 0.0} }, // bottom-right
+    .{ .position = [_]f32{-0.5,  0.5, -0.5}, .normal = [_]f32{0.0, 0.0, -1.0}, .uv = [_]f32{1.0, 1.0} }, // top-right
+    .{ .position = [_]f32{-0.5,  0.5, -0.5}, .normal = [_]f32{0.0, 0.0, -1.0}, .uv = [_]f32{1.0, 1.0} }, // top-right
+    .{ .position = [_]f32{ 0.5,  0.5, -0.5}, .normal = [_]f32{0.0, 0.0, -1.0}, .uv = [_]f32{0.0, 1.0} }, // top-left
+    .{ .position = [_]f32{ 0.5, -0.5, -0.5}, .normal = [_]f32{0.0, 0.0, -1.0}, .uv = [_]f32{0.0, 0.0} }, // bottom-left
+
+    // Front face (CCW winding)
+    .{ .position = [_]f32{-0.5, -0.5,  0.5}, .normal = [_]f32{0.0, 0.0, 1.0}, .uv = [_]f32{0.0, 0.0} }, // bottom-left
+    .{ .position = [_]f32{ 0.5, -0.5,  0.5}, .normal = [_]f32{0.0, 0.0, 1.0}, .uv = [_]f32{1.0, 0.0} }, // bottom-right
+    .{ .position = [_]f32{ 0.5,  0.5,  0.5}, .normal = [_]f32{0.0, 0.0, 1.0}, .uv = [_]f32{1.0, 1.0} }, // top-right
+    .{ .position = [_]f32{ 0.5,  0.5,  0.5}, .normal = [_]f32{0.0, 0.0, 1.0}, .uv = [_]f32{1.0, 1.0} }, // top-right
+    .{ .position = [_]f32{-0.5,  0.5,  0.5}, .normal = [_]f32{0.0, 0.0, 1.0}, .uv = [_]f32{0.0, 1.0} }, // top-left
+    .{ .position = [_]f32{-0.5, -0.5,  0.5}, .normal = [_]f32{0.0, 0.0, 1.0}, .uv = [_]f32{0.0, 0.0} }, // bottom-left
+
+    // Left face (CCW)
+    .{ .position = [_]f32{-0.5, -0.5, -0.5}, .normal = [_]f32{-1.0, 0.0, 0.0}, .uv = [_]f32{1.0, 0.0} }, // bottom-left
+    .{ .position = [_]f32{-0.5, -0.5,  0.5}, .normal = [_]f32{-1.0, 0.0, 0.0}, .uv = [_]f32{1.0, 1.0} }, // bottom-right
+    .{ .position = [_]f32{-0.5,  0.5,  0.5}, .normal = [_]f32{-1.0, 0.0, 0.0}, .uv = [_]f32{0.0, 1.0} }, // top-right
+    .{ .position = [_]f32{-0.5,  0.5,  0.5}, .normal = [_]f32{-1.0, 0.0, 0.0}, .uv = [_]f32{0.0, 1.0} }, // top-right
+    .{ .position = [_]f32{-0.5,  0.5, -0.5}, .normal = [_]f32{-1.0, 0.0, 0.0}, .uv = [_]f32{0.0, 0.0} }, // top-left
+    .{ .position = [_]f32{-0.5, -0.5, -0.5}, .normal = [_]f32{-1.0, 0.0, 0.0}, .uv = [_]f32{1.0, 0.0} }, // bottom-left
+
+    // Right face (CCW)
+    .{ .position = [_]f32{ 0.5, -0.5,  0.5}, .normal = [_]f32{1.0, 0.0, 0.0}, .uv = [_]f32{1.0, 0.0} }, // bottom-left
+    .{ .position = [_]f32{ 0.5, -0.5, -0.5}, .normal = [_]f32{1.0, 0.0, 0.0}, .uv = [_]f32{1.0, 1.0} }, // bottom-right
+    .{ .position = [_]f32{ 0.5,  0.5, -0.5}, .normal = [_]f32{1.0, 0.0, 0.0}, .uv = [_]f32{0.0, 1.0} }, // top-right
+    .{ .position = [_]f32{ 0.5,  0.5, -0.5}, .normal = [_]f32{1.0, 0.0, 0.0}, .uv = [_]f32{0.0, 1.0} }, // top-right
+    .{ .position = [_]f32{ 0.5,  0.5,  0.5}, .normal = [_]f32{1.0, 0.0, 0.0}, .uv = [_]f32{0.0, 0.0} }, // top-left
+    .{ .position = [_]f32{ 0.5, -0.5,  0.5}, .normal = [_]f32{1.0, 0.0, 0.0}, .uv = [_]f32{1.0, 0.0} }, // bottom-left
+
+    // Bottom face (CCW)      
+    .{ .position = [_]f32{-0.5, -0.5, -0.5}, .normal = [_]f32{0.0, -1.0, 0.0}, .uv = [_]f32{0.0, 1.0} }, // bottom-left
+    .{ .position = [_]f32{ 0.5, -0.5, -0.5}, .normal = [_]f32{0.0, -1.0, 0.0}, .uv = [_]f32{1.0, 1.0} }, // bottom-right
+    .{ .position = [_]f32{ 0.5, -0.5,  0.5}, .normal = [_]f32{0.0, -1.0, 0.0}, .uv = [_]f32{1.0, 0.0} }, // top-right
+    .{ .position = [_]f32{ 0.5, -0.5,  0.5}, .normal = [_]f32{0.0, -1.0, 0.0}, .uv = [_]f32{1.0, 0.0} }, // top-right
+    .{ .position = [_]f32{-0.5, -0.5,  0.5}, .normal = [_]f32{0.0, -1.0, 0.0}, .uv = [_]f32{0.0, 0.0} }, // top-left
+    .{ .position = [_]f32{-0.5, -0.5, -0.5}, .normal = [_]f32{0.0, -1.0, 0.0}, .uv = [_]f32{0.0, 1.0} }, // bottom-left
+
+    // Top face (CCW)
+    .{ .position = [_]f32{-0.5,  0.5,  0.5}, .normal = [_]f32{0.0, 1.0, 0.0}, .uv = [_]f32{0.0, 1.0} }, // bottom-left
+    .{ .position = [_]f32{ 0.5,  0.5,  0.5}, .normal = [_]f32{0.0, 1.0, 0.0}, .uv = [_]f32{1.0, 1.0} }, // bottom-right
+    .{ .position = [_]f32{ 0.5,  0.5, -0.5}, .normal = [_]f32{0.0, 1.0, 0.0}, .uv = [_]f32{1.0, 0.0} }, // top-right
+    .{ .position = [_]f32{ 0.5,  0.5, -0.5}, .normal = [_]f32{0.0, 1.0, 0.0}, .uv = [_]f32{1.0, 0.0} }, // top-right
+    .{ .position = [_]f32{-0.5,  0.5, -0.5}, .normal = [_]f32{0.0, 1.0, 0.0}, .uv = [_]f32{0.0, 0.0} }, // top-left
+    .{ .position = [_]f32{-0.5,  0.5,  0.5}, .normal = [_]f32{0.0, 1.0, 0.0}, .uv = [_]f32{0.0, 1.0} }, // bottom-left
+};
+
+pub const vertex_positions = &[_]gl.Float{
+    // back face (CCW winding)
+    0.5, -0.5, -0.5,    // bottom-left
+    -0.5, -0.5, -0.5,   // bottom-right
+    -0.5,  0.5, -0.5,   // top-right
+    -0.5,  0.5, -0.5,   // top-right
+    0.5,  0.5, -0.5,    // top-left
+    0.5, -0.5, -0.5,    // bottom-left
+    // front face (CCW winding)
+    -0.5, -0.5,  0.5,   // bottom-left
+    0.5, -0.5,  0.5,    // bottom-right
+    0.5,  0.5,  0.5,    // top-right
+    0.5,  0.5,  0.5,    // top-right
+    -0.5,  0.5,  0.5,   // top-left
+    -0.5, -0.5,  0.5,   // bottom-left
+    // left face (CCW)
+    -0.5, -0.5, -0.5,   // bottom-left
+    -0.5, -0.5,  0.5,   // bottom-right
+    -0.5,  0.5,  0.5,   // top-right
+    -0.5,  0.5,  0.5,   // top-right
+    -0.5,  0.5, -0.5,   // top-left
+    -0.5, -0.5, -0.5,   // bottom-left
+    // right face (CCW)
+    0.5, -0.5,  0.5,   // bottom-left
+    0.5, -0.5, -0.5,   // bottom-right
+    0.5,  0.5, -0.5,   // top-right
+    0.5,  0.5, -0.5,   // top-right
+    0.5,  0.5,  0.5,   // top-left
+    0.5, -0.5,  0.5,   // bottom-left
+    // bottom face (CCW)      
+    -0.5, -0.5, -0.5,   // bottom-left
+    0.5, -0.5, -0.5,    // bottom-right
+    0.5, -0.5,  0.5,    // top-right
+    0.5, -0.5,  0.5,    // top-right
+    -0.5, -0.5,  0.5,   // top-left
+    -0.5, -0.5, -0.5,   // bottom-left
+    // top face (CCW)
+    -0.5,  0.5,  0.5,   // bottom-left
+    0.5,  0.5,  0.5,    // bottom-right
+    0.5,  0.5, -0.5,    // top-right
+    0.5,  0.5, -0.5,    // top-right
+    -0.5,  0.5, -0.5,   // top-left
+    -0.5,  0.5,  0.5,   // bottom-left
+};
+
+pub const normal_positions = &[_]gl.Float{
+    // back face (CCW winding)
+    0.0, 0.0, -1.0,   // bottom-left
+    0.0, 0.0, -1.0,   // bottom-right
+    0.0, 0.0, -1.0,   // top-right
+    0.0, 0.0, -1.0,   // top-right
+    0.0, 0.0, -1.0,   // top-left
+    0.0, 0.0, -1.0,   // bottom-left
+    // front face (CCW winding)
+    0.0, 0.0, 1.0,   // bottom-left
+    0.0, 0.0, 1.0,   // bottom-right
+    0.0, 0.0, 1.0,   // top-right
+    0.0, 0.0, 1.0,   // top-right
+    0.0, 0.0, 1.0,   // top-left
+    0.0, 0.0, 1.0,   // bottom-left
+    // left face (CCW)
+    -1.0, 0.0, 0.0,   // bottom-left
+    -1.0, 0.0, 0.0,   // bottom-right
+    -1.0, 0.0, 0.0,   // top-right
+    -1.0, 0.0, 0.0,   // top-right
+    -1.0, 0.0, 0.0,   // top-left
+    -1.0, 0.0, 0.0,   // bottom-left
+    // right face (CCW)
+    1.0, 0.0, 0.0,   // bottom-left
+    1.0, 0.0, 0.0,   // bottom-right
+    1.0, 0.0, 0.0,   // top-right
+    1.0, 0.0, 0.0,   // top-right
+    1.0, 0.0, 0.0,   // top-left
+    1.0, 0.0, 0.0,   // bottom-left
+    // bottom face (CCW)      
+    0.0, -1.0, 0.0,   // bottom-left
+    0.0, -1.0, 0.0,   // bottom-right
+    0.0, -1.0, 0.0,   // top-right
+    0.0, -1.0, 0.0,   // top-right
+    0.0, -1.0, 0.0,   // top-left
+    0.0, -1.0, 0.0,   // bottom-left
+    // top face (CCW)
+    0.0, 1.0, 0.0,   // bottom-left
+    0.0, 1.0, 0.0,   // bottom-right
+    0.0, 1.0, 0.0,   // top-right
+    0.0, 1.0, 0.0,   // top-right
+    0.0, 1.0, 0.0,   // top-left
+    0.0, 1.0, 0.0,   // bottom-left
+};
+
+pub const texture_coords = &[_]gl.Float{
+    0.0, 0.0,
+    1.0, 0.0,
+    1.0, 1.0,
+    1.0, 1.0,
+    0.0, 1.0,
+    0.0, 0.0,
+
+    0.0, 0.0,
+    1.0, 0.0,
+    1.0, 1.0,
+    1.0, 1.0,
+    0.0, 1.0,
+    0.0, 0.0,
+
+    1.0, 0.0,
+    1.0, 1.0,
+    0.0, 1.0,
+    0.0, 1.0,
+    0.0, 0.0,
+    1.0, 0.0,
+
+    1.0, 0.0,
+    1.0, 1.0,
+    0.0, 1.0,
+    0.0, 1.0,
+    0.0, 0.0,
+    1.0, 0.0,
+
+    0.0, 1.0,
+    1.0, 1.0,
+    1.0, 0.0,
+    1.0, 0.0,
+    0.0, 0.0,
+    0.0, 1.0,
+
+    0.0, 1.0,
+    1.0, 1.0,
+    1.0, 0.0,
+    1.0, 0.0,
+    0.0, 0.0,
+    0.0, 1.0
+};
