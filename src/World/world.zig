@@ -3,12 +3,10 @@ const Allocator = std.mem.Allocator;
 const zm = @import("zmath");
 const znoise = @import("znoise");
 const Utils = @import("../utils.zig");
-const Chunk = @import("Chunk/chunk.zig");
 
 const World = @This();
 
 allocator: Allocator,
-chunk: Chunk,
 model_matrices: std.ArrayList([16]f32),
 flattened_matrices: []f32,
 height_range: f32,
@@ -24,7 +22,6 @@ pub fn init(gpa: Allocator, height_range: f32) !World {
     };
     return .{
         .allocator = gpa,
-        .chunk = .{},
         .model_matrices = std.ArrayList([16]f32).init(gpa),
         .flattened_matrices = undefined,
         .height_range = height_range,
