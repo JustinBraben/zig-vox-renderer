@@ -2,19 +2,19 @@
 
 // Inputs from vertex shader
 in vec3 v_normal;
-in vec2 v_texCoord;
+in vec3 v_texCoord; // Changed to vec3 for cubemap
 in vec3 v_position;
 
 // Output
 out vec4 FragColor;
 
 // Uniforms
-uniform sampler2D u_texture;
-uniform vec3 u_lightPos = vec3(1000.0, 1000.0, 1000.0); // Default light position
-uniform vec3 u_viewPos;  // Camera position for specular calculation
+uniform samplerCube u_texture; // Changed to samplerCube
+uniform vec3 u_lightPos = vec3(1000.0, 1000.0, 1000.0);
+uniform vec3 u_viewPos;
 
 void main() {
-    // Texture color
+    // Sample from cubemap using the texture coordinates
     vec4 texColor = texture(u_texture, v_texCoord);
     
     // Basic lighting calculation
@@ -28,7 +28,7 @@ void main() {
     float diff = max(dot(norm, lightDir), 0.0);
     vec3 diffuse = diff * vec3(1.0);
     
-    // Specular component (optional, for a bit of shine)
+    // Specular component
     float specularStrength = 0.1;
     vec3 viewDir = normalize(u_viewPos - v_position);
     vec3 reflectDir = reflect(-lightDir, norm);

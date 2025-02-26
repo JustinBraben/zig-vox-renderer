@@ -118,15 +118,14 @@ pub fn runLoop(self: *Application) !void {
     try skybox_mesh.addVBO(3, skybox_mesh.vertex_positions);
     skybox_mesh.unbindVAO();
 
-    // Old
-    // const dirt = &.{
-    //     "assets/textures/dirt/right.jpg",
-    //     "assets/textures/dirt/left.jpg",
-    //     "assets/textures/dirt/top.jpg",
-    //     "assets/textures/dirt/bottom.jpg",
-    //     "assets/textures/dirt/front.jpg",
-    //     "assets/textures/dirt/back.jpg",
-    // };
+    const dirt = &.{
+        "assets/textures/dirt/right.jpg",
+        "assets/textures/dirt/left.jpg",
+        "assets/textures/dirt/top.jpg",
+        "assets/textures/dirt/bottom.jpg",
+        "assets/textures/dirt/front.jpg",
+        "assets/textures/dirt/back.jpg",
+    };
     const skybox = &.{
         "assets/textures/skybox/right.jpg",
         "assets/textures/skybox/left.jpg",
@@ -136,12 +135,8 @@ pub fn runLoop(self: *Application) !void {
         "assets/textures/skybox/back.jpg",
     };
 
-    // Old
-    // const dirt_cube_map_texture = try Utils.loadCubemap(dirt);
-    // _ = dirt_cube_map_texture;
-
+    const dirt_cube_map_texture = try Utils.loadCubemap(dirt);
     const skybox_cube_map_texture = try Utils.loadCubemap(skybox);
-    const basic_voxel_mesh_texture = try Utils.loadTexture("assets/textures/dirt/top.jpg",);
 
     var wireframe: bool = false;
     var light_direction: [3]f32 = .{ 0.0, -1.0, -1.0 };
@@ -227,7 +222,7 @@ pub fn runLoop(self: *Application) !void {
         // cube_mesh.unbindVAO();
         basic_voxel_mesh.vao.bind();
         gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, basic_voxel_mesh_texture);
+        gl.bindTexture(gl.TEXTURE_CUBE_MAP, dirt_cube_map_texture);
         basic_voxel_mesh.draw();
         basic_voxel_mesh.vao.unbind();
 
