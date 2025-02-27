@@ -15,7 +15,9 @@ const VAO = @import("vao.zig");
 const VBO = @import("vbo.zig");
 const CubeMesh = @import("Models/cube_mesh.zig");
 const SkyboxMesh = @import("Models/skybox_mesh.zig");
+const Mesh = @import("Models/mesh.zig");
 const World = @import("World/world.zig");
+const Chunk = @import("World/chunk.zig");
 
 pub const ConfigOptions = struct {
     width: i32 = 1280,
@@ -25,7 +27,7 @@ pub const ConfigOptions = struct {
 };
 
 // Camera
-const camera_pos = zm.loadArr3(.{ 500.0, 100.0, 500.0 });
+const camera_pos = zm.loadArr3(.{ 0.0, 0.0, 5.0 });
 var lastX: f64 = 0.0;
 var lastY: f64 = 0.0;
 var first_mouse = true;
@@ -87,23 +89,36 @@ pub fn deinit(self: *Application) void {
 pub fn runLoop(self: *Application) !void {
     self.turnOffMouse();
 
-    const height_range = 10.0;
-    var world = try World.init(self.allocator, height_range);
-    try world.generate();
-    defer world.deinit();
+    // const height_range = 10.0;
+    // var world = try World.init(self.allocator, height_range);
+    // try world.generate();
+    // defer world.deinit();
 
     // set up vertex data (and buffer(s)) and configure vertex attributes
     // ------------------------------------------------------------------
     // Pass it the vertex shader and fragment shader
-    var cube_mesh = CubeMesh.init(self.allocator, "assets/shaders/voxel_instance_vert.glsl", "assets/shaders/voxel_instance_frag.glsl");
-    defer cube_mesh.deinit();
+    // var cube_mesh = CubeMesh.init(self.allocator, "assets/shaders/voxel_instance_vert.glsl", "assets/shaders/voxel_instance_frag.glsl");
+    // defer cube_mesh.deinit();
 
-    cube_mesh.bindVAO();
-    try cube_mesh.addVBO(3, cube_mesh.vertex_positions);
-    try cube_mesh.addVBO(3, cube_mesh.normal_positions);
-    try cube_mesh.addVBO(2, cube_mesh.texture_coords);
-    try cube_mesh.addInstanceVBO(4, world.flattened_matrices);
-    cube_mesh.unbindVAO();
+    // cube_mesh.bindVAO();
+    // try cube_mesh.addVBO(3, cube_mesh.vertex_positions);
+    // try cube_mesh.addVBO(3, cube_mesh.normal_positions);
+    // try cube_mesh.addVBO(2, cube_mesh.texture_coords);
+    // try cube_mesh.addInstanceVBO(4, world.flattened_matrices);
+    // cube_mesh.unbindVAO();
+
+    var basic_chunk = try Chunk.init(self.allocator, .{ .x = 0, .z = -1 });
+    defer basic_chunk.deinit();
+    basic_chunk.setBlock(1, 1, 1, .{ .id = 1 });
+    basic_chunk.setBlock(5, 5, 5, .{ .id = 1 });
+    basic_chunk.setBlock(6, 6, 6, .{ .id = 1 });
+    try basic_chunk.generateMesh();
+
+    var basic_voxel_mesh = Mesh.init();
+    defer basic_voxel_mesh.deinit();
+    basic_voxel_mesh.setBasicVoxel();
+    var basic_voxel_mesh_shader = Shader.create(self.allocator, "assets/shaders/basic_voxel_mesh_vert.glsl", "assets/shaders/basic_voxel_mesh_frag.glsl");
+
 
     var skybox_mesh = SkyboxMesh.init(self.allocator, "assets/shaders/skybox_vert.glsl", "assets/shaders/skybox_frag.glsl");
     defer skybox_mesh.deinit();
@@ -135,16 +150,18 @@ pub fn runLoop(self: *Application) !void {
     var light_direction: [3]f32 = .{ 0.0, -1.0, -1.0 };
     var shininess: f32 = 32.0;
 
-    // shader configuration
-    // --------------------
-    cube_mesh.shader.use();
-    cube_mesh.shader.setInt("texture_diffuse1", 0);
-    cube_mesh.shader.setInt("material.diffuse", 0);
-    cube_mesh.shader.setInt("material.specular", 1);
-    cube_mesh.shader.setVec3f("light.direction",  light_direction);
-    cube_mesh.shader.setVec3f("light.ambient",  .{ 0.2, 0.2, 0.2 });
-    cube_mesh.shader.setVec3f("light.diffuse",  .{ 0.8, 0.8, 0.8 });
-    cube_mesh.shader.setVec3f("light.specular",  .{ 1.0, 1.0, 1.0 });
+    // // shader configuration
+    // // --------------------
+    // cube_mesh.shader.use();
+    // cube_mesh.shader.setInt("texture_diffuse1", 0);
+    // cube_mesh.shader.setInt("material.diffuse", 0);
+    // cube_mesh.shader.setInt("material.specular", 1);
+    // cube_mesh.shader.setVec3f("light.direction",  light_direction);
+    // cube_mesh.shader.setVec3f("light.ambient",  .{ 0.2, 0.2, 0.2 });
+    // cube_mesh.shader.setVec3f("light.diffuse",  .{ 0.8, 0.8, 0.8 });
+    // cube_mesh.shader.setVec3f("light.specular",  .{ 1.0, 1.0, 1.0 });
+    basic_voxel_mesh_shader.use();
+    basic_voxel_mesh_shader.setInt("u_texture", 0);
 
     skybox_mesh.shader.use();
     skybox_mesh.shader.setInt("skybox", 0);
@@ -171,20 +188,23 @@ pub fn runLoop(self: *Application) !void {
         gl.clearColor(0.1, 0.1, 0.1, 1.0);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-        const tz_draw_voxels = ztracy.ZoneN(@src(), "Drawing Voxels");
-        // draw scene as normal
-        cube_mesh.shader.use();
-        cube_mesh.shader.setVec3f("light.direction",  light_direction);
-        cube_mesh.shader.setFloat("material.shininess", shininess);
-        const tz_viewPos = ztracy.ZoneN(@src(), "cube_mesh.shader.setVec3f(\"viewPos\", camera.getViewPos())");
-        cube_mesh.shader.setVec3f("viewPos", camera.getViewPos());
-        tz_viewPos.End();
+        // // draw scene as normal
+        // cube_mesh.shader.use();
+        // cube_mesh.shader.setVec3f("light.direction",  light_direction);
+        // cube_mesh.shader.setFloat("material.shininess", shininess);
+        // const tz_viewPos = ztracy.ZoneN(@src(), "cube_mesh.shader.setVec3f(\"viewPos\", camera.getViewPos())");
+        // cube_mesh.shader.setVec3f("viewPos", camera.getViewPos());
+        // tz_viewPos.End();
+        basic_voxel_mesh_shader.use();
+        basic_voxel_mesh_shader.setMat4f("u_model", zm.matToArr(zm.identity()));
+        basic_voxel_mesh_shader.setVec3f("u_viewPos", camera.getViewPos());
 
         // TODO: Only change this when view changes 
         // which is whenever the camera moves
         var viewM = camera.getViewMatrix();
         zm.storeMat(&view, viewM);
-        cube_mesh.shader.setMat4f("view", view);
+        // cube_mesh.shader.setMat4f("view", view);
+        basic_voxel_mesh_shader.setMat4f("u_view", view);
 
         // TODO: This projection could just be calculated up front 
         // and only recalculated when 
@@ -193,7 +213,8 @@ pub fn runLoop(self: *Application) !void {
         const aspect_ratio: f32 = @as(f32, @floatFromInt(window_size[0])) / @as(f32, @floatFromInt(window_size[1]));
         const projectionM = zm.perspectiveFovRhGl(Utils.radians(camera.zoom), aspect_ratio, 0.1, 1000.0);
         zm.storeMat(&projection, projectionM);
-        cube_mesh.shader.setMat4f("projection",  projection);
+        // cube_mesh.shader.setMat4f("projection",  projection);
+        basic_voxel_mesh_shader.setMat4f("u_projection", projection);
 
         if (wireframe) {
             gl.polygonMode(gl.FRONT_AND_BACK, gl.LINE);
@@ -201,13 +222,45 @@ pub fn runLoop(self: *Application) !void {
             gl.polygonMode(gl.FRONT_AND_BACK, gl.FILL);
         }
 
-        // cubes
-        cube_mesh.bindVAO();
+        // // cubes
+        // cube_mesh.bindVAO();
+        // gl.activeTexture(gl.TEXTURE0);
+        // gl.bindTexture(gl.TEXTURE_CUBE_MAP, dirt_cube_map_texture);
+        // gl.drawArraysInstanced(gl.TRIANGLES, 0, 36, @intCast(world.model_matrices.items.len));
+        // cube_mesh.unbindVAO();
+        basic_voxel_mesh.vao.bind();
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_CUBE_MAP, dirt_cube_map_texture);
-        gl.drawArraysInstanced(gl.TRIANGLES, 0, 36, @intCast(world.model_matrices.items.len));
-        cube_mesh.unbindVAO();
-        tz_draw_voxels.End();
+        basic_voxel_mesh.draw();
+        basic_voxel_mesh.vao.unbind();
+
+        // Render one chunk
+        if (basic_chunk.mesh) |*mesh| {
+            // Calculate the chunk's world position model matrix
+            const chunk_offset = basic_chunk.pos.worldOffset();
+            // const chunk_model = zm.mul(
+            //     zm.scaling(16, 1.0, 16), 
+            //     zm.translation(
+            //         chunk_offset[0],
+            //         0.0,
+            //         chunk_offset[2])
+            // );
+
+            const chunk_model = zm.translation(
+                chunk_offset[0],
+                0.0,
+                chunk_offset[2]
+            );
+            
+            // Set the model matrix for the chunk
+            basic_voxel_mesh_shader.setMat4f("u_model", zm.matToArr(chunk_model));
+
+            mesh.vao.bind();
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_CUBE_MAP, dirt_cube_map_texture);
+            mesh.draw();
+            mesh.vao.unbind();
+        }
 
         // draw skybox as last
         skybox_mesh.shader.use();
@@ -235,7 +288,7 @@ pub fn runLoop(self: *Application) !void {
             _ = zgui.checkbox("wireframe", .{ .v = &wireframe });
             _ = zgui.dragFloat("shininess", .{ .v = &shininess, .min = 16.0, .max = 128.0 });
             if (zgui.dragFloat3("light direction", .{ .v = &light_direction, .min = -1.0, .max = 1.0, })) {
-                cube_mesh.shader.setVec3f("light.direction",  light_direction);
+                // cube_mesh.shader.setVec3f("light.direction",  light_direction);
             }
         }
         zgui.end();
