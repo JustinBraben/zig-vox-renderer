@@ -315,6 +315,30 @@ pub fn runLoop(self: *Application) !void {
             gl.bindTexture(gl.TEXTURE_2D, dirt_texture.top);
             gl.drawArrays(gl.TRIANGLES, 30, 6);
 
+            // Back face (vertices 0-5)
+            gl.bindTexture(gl.TEXTURE_2D, dirt_texture.back);
+            gl.drawArrays(gl.TRIANGLES, 36, 6);
+
+            // Front face (vertices 6-11)
+            gl.bindTexture(gl.TEXTURE_2D, dirt_texture.front);
+            gl.drawArrays(gl.TRIANGLES, 42, 6);
+
+            // Left face (vertices 12-17)
+            gl.bindTexture(gl.TEXTURE_2D, dirt_texture.left);
+            gl.drawArrays(gl.TRIANGLES, 48, 6);
+
+            // Right face (vertices 18-23)
+            gl.bindTexture(gl.TEXTURE_2D, dirt_texture.right);
+            gl.drawArrays(gl.TRIANGLES, 54, 6);
+
+            // Bottom face (vertices 24-29)
+            gl.bindTexture(gl.TEXTURE_2D, dirt_texture.bottom);
+            gl.drawArrays(gl.TRIANGLES, 60, 6);
+
+            // Top face (vertices 30-35)
+            gl.bindTexture(gl.TEXTURE_2D, dirt_texture.top);
+            gl.drawArrays(gl.TRIANGLES, 66, 6);
+
             // mesh.draw();
             mesh.vao.unbind();
         }
