@@ -129,12 +129,12 @@ pub fn generateMesh(self: *Chunk) !void {
 
     // Directions for checking adjacent blocks (x, y, z)
     const directions = [_][3]i32{
-        [_]i32{ 0, 1, 0 },  // Up
-        [_]i32{ 0, -1, 0 }, // Down
-        [_]i32{ 1, 0, 0 },  // East
-        [_]i32{ -1, 0, 0 }, // West
         [_]i32{ 0, 0, 1 },  // North
         [_]i32{ 0, 0, -1 }, // South
+        [_]i32{ -1, 0, 0 }, // West
+        [_]i32{ 1, 0, 0 },  // East
+        [_]i32{ 0, -1, 0 }, // Down
+        [_]i32{ 0, 1, 0 },  // Up
     };
 
     // Iterate through all blocks in the chunk
@@ -195,12 +195,12 @@ pub fn generateMesh(self: *Chunk) !void {
                         // Add face vertices to the mesh
                         // Select the appropriate face based on direction
                         switch (dir_idx) {
-                            0 => try addFaceVertices(&vertices, local_x, local_y, local_z, .top),
-                            1 => try addFaceVertices(&vertices, local_x, local_y, local_z, .bottom),
-                            2 => try addFaceVertices(&vertices, local_x, local_y, local_z, .right),
-                            3 => try addFaceVertices(&vertices, local_x, local_y, local_z, .left),
-                            4 => try addFaceVertices(&vertices, local_x, local_y, local_z, .front),
-                            5 => try addFaceVertices(&vertices, local_x, local_y, local_z, .back),
+                            0 => try addFaceVertices(&vertices, local_x, local_y, local_z, .back),
+                            1 => try addFaceVertices(&vertices, local_x, local_y, local_z, .front),
+                            2 => try addFaceVertices(&vertices, local_x, local_y, local_z, .left),
+                            3 => try addFaceVertices(&vertices, local_x, local_y, local_z, .right),
+                            4 => try addFaceVertices(&vertices, local_x, local_y, local_z, .bottom),
+                            5 => try addFaceVertices(&vertices, local_x, local_y, local_z, .top),
                             else => unreachable,
                         }
                     }

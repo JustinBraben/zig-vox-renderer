@@ -68,6 +68,7 @@ pub fn SaveTexture(path: []const u8, texture: gl.UInt) void {
 pub fn loadTexture(path: [:0]const u8) !gl.Uint {
     var textureID: gl.Uint = undefined;
     gl.genTextures(1, &textureID);
+    gl.bindTexture(gl.TEXTURE_2D, textureID);
 
     var texture_image = try zstbi.Image.loadFromFile(path, 0);
     defer texture_image.deinit();
@@ -81,7 +82,13 @@ pub fn loadTexture(path: [:0]const u8) !gl.Uint {
 
     std.debug.print("{s} is {}\n", .{path, format});
 
-    gl.bindTexture(gl.TEXTURE_2D, textureID);
+    // set the texture1 wrapping parameters
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT); // set texture wrapping to GL_REPEAT (default wrapping method)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+    // set textureID filtering parameters
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
     // Generate the textureID
     gl.texImage2D(
         gl.TEXTURE_2D, 
@@ -95,12 +102,6 @@ pub fn loadTexture(path: [:0]const u8) !gl.Uint {
         @ptrCast(texture_image.data));
     gl.generateMipmap(gl.TEXTURE_2D);
 
-    // set the texture1 wrapping parameters
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT); // set texture wrapping to GL_REPEAT (default wrapping method)
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
-    // set textureID filtering parameters
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     return textureID;
 }
 
