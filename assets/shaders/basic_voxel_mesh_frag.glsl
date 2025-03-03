@@ -2,14 +2,14 @@
 
 // Inputs from vertex shader
 in vec3 v_normal;
-in vec3 v_texCoord; // Changed to vec3 for cubemap
+in vec2 v_texCoord;
 in vec3 v_position;
 
 // Output
 out vec4 FragColor;
 
 // Uniforms
-uniform samplerCube u_texture; // Changed to samplerCube
+uniform sampler2D u_texture; // Changed to samplerCube
 uniform vec3 u_lightPos = vec3(1000.0, 1000.0, 1000.0);
 uniform vec3 u_viewPos;
 

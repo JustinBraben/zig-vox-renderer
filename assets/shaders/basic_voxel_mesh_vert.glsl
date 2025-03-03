@@ -12,7 +12,7 @@ uniform mat4 u_projection;
 
 // Outputs to fragment shader
 out vec3 v_normal;
-out vec3 v_texCoord; // Changed to vec3 for cubemap
+out vec2 v_texCoord;
 out vec3 v_position;
 
 void main() {
@@ -29,5 +29,5 @@ void main() {
     v_position = worldPos.xyz;
 
     // Set cubemap to match sides
-    v_texCoord = a_normal;
+    v_texCoord = a_texCoord;
 }
