@@ -264,7 +264,7 @@ pub fn runLoop(self: *Application) !void {
         // Top face (vertices 30-35)
         gl.bindTexture(gl.TEXTURE_2D, dirt_texture.top);
         gl.drawArrays(gl.TRIANGLES, 30, 6);
-        basic_voxel_mesh.draw();
+        // basic_voxel_mesh.draw();
         basic_voxel_mesh.vao.unbind();
 
         // Render one chunk
@@ -315,7 +315,7 @@ pub fn runLoop(self: *Application) !void {
             gl.bindTexture(gl.TEXTURE_2D, dirt_texture.top);
             gl.drawArrays(gl.TRIANGLES, 30, 6);
 
-            mesh.draw();
+            // mesh.draw();
             mesh.vao.unbind();
         }
 

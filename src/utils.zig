@@ -70,9 +70,6 @@ pub fn loadTexture(path: [:0]const u8) !gl.Uint {
     gl.genTextures(1, &textureID);
     gl.bindTexture(gl.TEXTURE_2D, textureID);
 
-    zstbi.setFlipVerticallyOnLoad(true);
-    defer zstbi.setFlipVerticallyOnLoad(false);
-
     var texture_image = try zstbi.Image.loadFromFile(path, 0);
     defer texture_image.deinit();
 
@@ -104,7 +101,7 @@ pub fn loadTexture(path: [:0]const u8) !gl.Uint {
         gl.UNSIGNED_BYTE, 
         @ptrCast(texture_image.data));
     gl.generateMipmap(gl.TEXTURE_2D);
-    
+
     return textureID;
 }
 
