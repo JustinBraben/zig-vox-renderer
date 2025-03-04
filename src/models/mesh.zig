@@ -2,9 +2,9 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const zopengl = @import("zopengl");
 const gl = zopengl.bindings;
-const Shader = @import("../shader.zig");
-const VAO = @import("../vao.zig");
-const VBO = @import("../vbo.zig");
+const Shader = @import("../gfx/shader.zig");
+const VAO = @import("../gfx/vao.zig");
+const VBO = @import("../gfx/vbo.zig");
 const TextureAtlas = @import("../gfx/texture_atlas.zig");
 
 const Mesh = @This();
