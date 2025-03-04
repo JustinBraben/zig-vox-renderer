@@ -104,6 +104,8 @@ pub fn runLoop(self: *Application) !void {
     // var world = try World.init(self.allocator, height_range);
     // try world.generate();
     // defer world.deinit();
+    // var world = try World.init(self.allocator);
+    // defer world.deinit();
 
     const skybox = &.{
         "assets/textures/skybox/right.jpg",
@@ -119,8 +121,10 @@ pub fn runLoop(self: *Application) !void {
     var texture_atlas = try Atlas.initFromPath("assets/textures/blocks.png", 16, 16); // 16x16 texture grid
     // try texture_atlas.load("assets/textures/blocks.png");
 
-    var basic_chunk = try Chunk.init(self.allocator, .{ .x = 0, .z = -1 });
-    defer basic_chunk.deinit();
+    var world = try World.init(self.allocator);
+    defer world.deinit();
+    try world.chunks.append(Chunk.init(self.allocator, .{ .x = 0, .z = -1 }));
+    var basic_chunk = world.chunks.getLast();
     basic_chunk.setBlock(1, 1, 1, .{ .id = 1 });
     basic_chunk.setBlock(5, 5, 5, .{ .id = 1 });
     basic_chunk.setBlock(6, 6, 6, .{ .id = 1 });

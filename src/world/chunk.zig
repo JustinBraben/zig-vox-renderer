@@ -56,11 +56,8 @@ is_dirty: bool,
 is_empty: bool,
 allocator: Allocator,
 
-pub fn init(allocator: Allocator, pos: ChunkPos) !*Chunk {
-    var chunk: *Chunk = undefined;
-    chunk = try allocator.create(Chunk);
-
-    chunk.* = .{
+pub fn init(allocator: Allocator, pos: ChunkPos) Chunk {
+    var chunk: Chunk = .{
         .pos = pos,
         .blocks = undefined,
         .mesh = null,
@@ -85,7 +82,6 @@ pub fn deinit(self: *Chunk) void {
     if (self.mesh) |*mesh| {
         mesh.deinit();
     }
-    self.allocator.destroy(self);
 }
 
 pub fn getBlock(self: *Chunk, x: usize, y: usize, z: usize) Block {
@@ -98,9 +94,8 @@ pub fn setBlock(self: *Chunk, x: usize, y: usize, z: usize, block: Block) void {
 }
 
 pub fn generateMesh(self: *Chunk, atlas: *const TextureAtlas) !void {
-    // _ = atlas;
-    // Skip if the chunk is not dirty
-    if (!self.is_dirty) return;
+    // Skip if the chunk is not dirty or empty
+    if (!self.is_dirty or self.is_empty) return;
 
     var vertices = std.ArrayList(Vertex).init(self.allocator);
     defer vertices.deinit();
@@ -130,17 +125,11 @@ pub fn generateMesh(self: *Chunk, atlas: *const TextureAtlas) !void {
                 const world_x: i32 = @as(i32, @intCast(x)) + self.pos.x * CHUNK_SIZE;
                 const world_y: i32 = @as(i32, @intCast(y));
                 const world_z: i32 = @as(i32, @intCast(z)) + self.pos.z * CHUNK_SIZE;
-                // _ = world_x;
-                // _ = world_y;
-                // _ = world_z;
 
                 // Local position for vertex offset within the chunk
                 const local_x: f32 = @floatFromInt(x);
                 const local_y: f32 = @floatFromInt(y);
                 const local_z: f32 = @floatFromInt(z);
-                // _ = local_x;
-                // _ = local_y;
-                // _ = local_z;
 
                 for (directions, 0..) |dir, dir_idx| {
                     // Position of the adjacent block in world coordinates
