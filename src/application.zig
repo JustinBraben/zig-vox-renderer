@@ -18,6 +18,7 @@ const SkyboxMesh = @import("Models/skybox_mesh.zig");
 const Mesh = @import("Models/mesh.zig");
 const World = @import("World/world.zig");
 const Chunk = @import("World/chunk.zig");
+const TextureAtlas = @import("gfx/texture_atlas.zig");
 
 pub const ConfigOptions = struct {
     width: i32 = 1280,
@@ -117,6 +118,10 @@ pub fn runLoop(self: *Application) !void {
     // try cube_mesh.addInstanceVBO(4, world.flattened_matrices);
     // cube_mesh.unbindVAO();
 
+    // Initialize the texture atlas
+    var global_texture_atlas = TextureAtlas.init(16, 16); // 16x16 texture grid
+    try global_texture_atlas.load("assets/textures/blocks.png");
+
     var basic_chunk = try Chunk.init(self.allocator, .{ .x = 0, .z = -1 });
     defer basic_chunk.deinit();
     basic_chunk.setBlock(1, 1, 1, .{ .id = 1 });
@@ -126,7 +131,7 @@ pub fn runLoop(self: *Application) !void {
 
     var basic_voxel_mesh = Mesh.init();
     defer basic_voxel_mesh.deinit();
-    basic_voxel_mesh.setBasicVoxel();
+    basic_voxel_mesh.setBasicVoxel(&global_texture_atlas);
     var basic_voxel_mesh_shader = Shader.create(self.allocator, "assets/shaders/basic_voxel_mesh_vert.glsl", "assets/shaders/basic_voxel_mesh_frag.glsl");
 
 
@@ -153,15 +158,15 @@ pub fn runLoop(self: *Application) !void {
         "assets/textures/skybox/back.jpg",
     };
 
-    // Load all textures for dirt blocks
-    const dirt_texture: DirtTextures = try .{
-        .right = try Utils.loadTexture("assets/textures/dirt/right.jpg"),
-        .left = try Utils.loadTexture("assets/textures/dirt/left.jpg"),
-        .top = try Utils.loadTexture("assets/textures/dirt/top.jpg"),
-        .bottom = try Utils.loadTexture("assets/textures/dirt/bottom.jpg"),
-        .front = try Utils.loadTexture("assets/textures/dirt/front.jpg"),
-        .back = try Utils.loadTexture("assets/textures/dirt/back.jpg"),
-    };
+    // // Load all textures for dirt blocks
+    // const dirt_texture: DirtTextures = try .{
+    //     .right = try Utils.loadTexture("assets/textures/dirt/right.jpg"),
+    //     .left = try Utils.loadTexture("assets/textures/dirt/left.jpg"),
+    //     .top = try Utils.loadTexture("assets/textures/dirt/top.jpg"),
+    //     .bottom = try Utils.loadTexture("assets/textures/dirt/bottom.jpg"),
+    //     .front = try Utils.loadTexture("assets/textures/dirt/front.jpg"),
+    //     .back = try Utils.loadTexture("assets/textures/dirt/back.jpg"),
+    // };
 
     const skybox_cube_map_texture = try Utils.loadCubemap(skybox);
 
@@ -241,30 +246,32 @@ pub fn runLoop(self: *Application) !void {
         // cube_mesh.unbindVAO();
         basic_voxel_mesh.vao.bind();
         gl.activeTexture(gl.TEXTURE0);
-        // Back face (vertices 0-5)
-        gl.bindTexture(gl.TEXTURE_2D, dirt_texture.back);
-        gl.drawArrays(gl.TRIANGLES, 0, 6);
+        // // Back face (vertices 0-5)
+        // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.back);
+        // gl.drawArrays(gl.TRIANGLES, 0, 6);
 
-        // Front face (vertices 6-11)
-        gl.bindTexture(gl.TEXTURE_2D, dirt_texture.front);
-        gl.drawArrays(gl.TRIANGLES, 6, 6);
+        // // Front face (vertices 6-11)
+        // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.front);
+        // gl.drawArrays(gl.TRIANGLES, 6, 6);
 
-        // Left face (vertices 12-17)
-        gl.bindTexture(gl.TEXTURE_2D, dirt_texture.left);
-        gl.drawArrays(gl.TRIANGLES, 12, 6);
+        // // Left face (vertices 12-17)
+        // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.left);
+        // gl.drawArrays(gl.TRIANGLES, 12, 6);
 
-        // Right face (vertices 18-23)
-        gl.bindTexture(gl.TEXTURE_2D, dirt_texture.right);
-        gl.drawArrays(gl.TRIANGLES, 18, 6);
+        // // Right face (vertices 18-23)
+        // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.right);
+        // gl.drawArrays(gl.TRIANGLES, 18, 6);
 
-        // Bottom face (vertices 24-29)
-        gl.bindTexture(gl.TEXTURE_2D, dirt_texture.bottom);
-        gl.drawArrays(gl.TRIANGLES, 24, 6);
+        // // Bottom face (vertices 24-29)
+        // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.bottom);
+        // gl.drawArrays(gl.TRIANGLES, 24, 6);
 
-        // Top face (vertices 30-35)
-        gl.bindTexture(gl.TEXTURE_2D, dirt_texture.top);
-        gl.drawArrays(gl.TRIANGLES, 30, 6);
-        // basic_voxel_mesh.draw();
+        // // Top face (vertices 30-35)
+        // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.top);
+        // gl.drawArrays(gl.TRIANGLES, 30, 6);
+        // // basic_voxel_mesh.draw();
+        gl.bindTexture(gl.TEXTURE_2D, global_texture_atlas.texture_id);
+        basic_voxel_mesh.draw();
         basic_voxel_mesh.vao.unbind();
 
         // Render one chunk
@@ -288,59 +295,61 @@ pub fn runLoop(self: *Application) !void {
             // Set the model matrix for the chunk
             basic_voxel_mesh_shader.setMat4f("u_model", zm.matToArr(chunk_model));
 
-            mesh.vao.bind();
             gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, global_texture_atlas.texture_id);
+            mesh.draw();
+            // mesh.vao.bind();
             
-            // Back face (vertices 0-5)
-            gl.bindTexture(gl.TEXTURE_2D, dirt_texture.back);
-            gl.drawArrays(gl.TRIANGLES, 0, 6);
+            // // Back face (vertices 0-5)
+            // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.back);
+            // gl.drawArrays(gl.TRIANGLES, 0, 6);
 
-            // Front face (vertices 6-11)
-            gl.bindTexture(gl.TEXTURE_2D, dirt_texture.front);
-            gl.drawArrays(gl.TRIANGLES, 6, 6);
+            // // Front face (vertices 6-11)
+            // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.front);
+            // gl.drawArrays(gl.TRIANGLES, 6, 6);
 
-            // Left face (vertices 12-17)
-            gl.bindTexture(gl.TEXTURE_2D, dirt_texture.left);
-            gl.drawArrays(gl.TRIANGLES, 12, 6);
+            // // Left face (vertices 12-17)
+            // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.left);
+            // gl.drawArrays(gl.TRIANGLES, 12, 6);
 
-            // Right face (vertices 18-23)
-            gl.bindTexture(gl.TEXTURE_2D, dirt_texture.right);
-            gl.drawArrays(gl.TRIANGLES, 18, 6);
+            // // Right face (vertices 18-23)
+            // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.right);
+            // gl.drawArrays(gl.TRIANGLES, 18, 6);
 
-            // Bottom face (vertices 24-29)
-            gl.bindTexture(gl.TEXTURE_2D, dirt_texture.bottom);
-            gl.drawArrays(gl.TRIANGLES, 24, 6);
+            // // Bottom face (vertices 24-29)
+            // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.bottom);
+            // gl.drawArrays(gl.TRIANGLES, 24, 6);
 
-            // Top face (vertices 30-35)
-            gl.bindTexture(gl.TEXTURE_2D, dirt_texture.top);
-            gl.drawArrays(gl.TRIANGLES, 30, 6);
+            // // Top face (vertices 30-35)
+            // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.top);
+            // gl.drawArrays(gl.TRIANGLES, 30, 6);
 
-            // Back face (vertices 0-5)
-            gl.bindTexture(gl.TEXTURE_2D, dirt_texture.back);
-            gl.drawArrays(gl.TRIANGLES, 36, 6);
+            // // Back face (vertices 0-5)
+            // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.back);
+            // gl.drawArrays(gl.TRIANGLES, 36, 6);
 
-            // Front face (vertices 6-11)
-            gl.bindTexture(gl.TEXTURE_2D, dirt_texture.front);
-            gl.drawArrays(gl.TRIANGLES, 42, 6);
+            // // Front face (vertices 6-11)
+            // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.front);
+            // gl.drawArrays(gl.TRIANGLES, 42, 6);
 
-            // Left face (vertices 12-17)
-            gl.bindTexture(gl.TEXTURE_2D, dirt_texture.left);
-            gl.drawArrays(gl.TRIANGLES, 48, 6);
+            // // Left face (vertices 12-17)
+            // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.left);
+            // gl.drawArrays(gl.TRIANGLES, 48, 6);
 
-            // Right face (vertices 18-23)
-            gl.bindTexture(gl.TEXTURE_2D, dirt_texture.right);
-            gl.drawArrays(gl.TRIANGLES, 54, 6);
+            // // Right face (vertices 18-23)
+            // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.right);
+            // gl.drawArrays(gl.TRIANGLES, 54, 6);
 
-            // Bottom face (vertices 24-29)
-            gl.bindTexture(gl.TEXTURE_2D, dirt_texture.bottom);
-            gl.drawArrays(gl.TRIANGLES, 60, 6);
+            // // Bottom face (vertices 24-29)
+            // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.bottom);
+            // gl.drawArrays(gl.TRIANGLES, 60, 6);
 
-            // Top face (vertices 30-35)
-            gl.bindTexture(gl.TEXTURE_2D, dirt_texture.top);
-            gl.drawArrays(gl.TRIANGLES, 66, 6);
+            // // Top face (vertices 30-35)
+            // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.top);
+            // gl.drawArrays(gl.TRIANGLES, 66, 6);
 
             // mesh.draw();
-            mesh.vao.unbind();
+            // mesh.vao.unbind();
         }
 
         // draw skybox as last

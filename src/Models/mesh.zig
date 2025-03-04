@@ -5,6 +5,7 @@ const gl = zopengl.bindings;
 const Shader = @import("../shader.zig");
 const VAO = @import("../vao.zig");
 const VBO = @import("../vbo.zig");
+const TextureAtlas = @import("../gfx/texture_atlas.zig");
 
 const Mesh = @This();
 
@@ -75,10 +76,120 @@ pub fn draw(self: *Mesh) void {
     gl.drawArrays(gl.TRIANGLES, 0, @intCast(self.vertex_count));
 }
 
-pub fn setBasicVoxel(self: *Mesh) void {
-    const vertices = basic_voxel_vertices;
+pub fn setBasicVoxel(self: *Mesh, atlas: *const TextureAtlas) void {
+    // const vertices = basic_voxel_vertices;
 
+    // self.uploadData(&vertices);
+
+    var vertices: [36]Vertex = undefined;
+    
+    // Copy the basic vertices positions and normals
+    for (0..36) |i| {
+        vertices[i].position = .{
+            basic_voxel_vertices[i].position[0],
+            basic_voxel_vertices[i].position[1],
+            basic_voxel_vertices[i].position[2],
+        };
+        vertices[i].normal = .{
+            basic_voxel_vertices[i].normal[0],
+            basic_voxel_vertices[i].normal[1],
+            basic_voxel_vertices[i].normal[2],
+        };
+    }
+    
+    // Update UVs for each face based on texture atlas
+    updateFaceUVs(&vertices, 0, atlas, TextureAtlas.BlockTexture.DIRT_SIDE);   // Back face
+    updateFaceUVs(&vertices, 6, atlas, TextureAtlas.BlockTexture.DIRT_SIDE);  // Front face
+    updateFaceUVs(&vertices, 12, atlas, TextureAtlas.BlockTexture.DIRT_SIDE);  // Left face
+    updateFaceUVs(&vertices, 18, atlas, TextureAtlas.BlockTexture.DIRT_SIDE); // Right face
+    updateFaceUVs(&vertices, 24, atlas, TextureAtlas.BlockTexture.DIRT_BOTTOM); // Bottom face
+    updateFaceUVs(&vertices, 30, atlas, TextureAtlas.BlockTexture.DIRT_TOP);   // Top face
+    
     self.uploadData(&vertices);
+}
+
+// Update UVs for a specific face with texture atlas coordinates
+fn updateFaceUVs(vertices: *[36]Vertex, start_idx: usize, atlas: *const TextureAtlas, texture_id: TextureAtlas.BlockTexture) void {
+    const uvs = atlas.getFaceCoords(texture_id);
+    
+    // Triangle 1
+    vertices[start_idx + 0].uv = .{ uvs[0][0], uvs[0][1] }; // bottom-left
+    vertices[start_idx + 1].uv = .{ uvs[1][0], uvs[1][1] }; // bottom-right
+    vertices[start_idx + 2].uv = .{ uvs[2][0], uvs[2][1] }; // top-right
+    
+    // // Triangle 2
+    // vertices[start_idx + 3].uv = .{ uvs[3][0], uvs[3][1] }; // bottom-left
+    // vertices[start_idx + 4].uv = .{ uvs[4][0], uvs[4][1] }; // top-right
+    // vertices[start_idx + 5].uv = .{ uvs[5][0], uvs[5][1] }; // top-left
+
+    // Triangle 2
+    vertices[start_idx + 3].uv = .{ uvs[4][0], uvs[4][1] }; // bottom-left
+    vertices[start_idx + 4].uv = .{ uvs[5][0], uvs[5][1] }; // top-right
+    vertices[start_idx + 5].uv = .{ uvs[3][0], uvs[3][1] }; // top-left
+}
+
+// Create a mesh with multiple different blocks from the texture atlas
+pub fn createVoxelMesh(self: *Mesh, allocator: Allocator, blocks: []const struct {
+    position: [3]f32,
+    type: u32,
+}, atlas: *const TextureAtlas) !void {
+    // Each block has 6 faces * 6 vertices per face = 36 vertices
+    var vertices = try std.ArrayList(Vertex).initCapacity(allocator, blocks.len * 36);
+    defer vertices.deinit();
+
+    // For each block
+    for (blocks) |block| {
+        // Add vertices for each face, with proper position offset and texture coordinates
+        try addBlockFaces(&vertices, block.position, block.type, atlas);
+    }
+
+    self.uploadData(vertices.items);
+}
+
+// Add all faces for a block at the given position
+fn addBlockFaces(vertices: *std.ArrayList(Vertex), position: [3]f32, block_type: u32, atlas: *const TextureAtlas) !void {
+    // Get texture IDs for each face based on block type
+    const face_ids = [_]u32{
+        atlas.getBlockTexture(block_type, .Side),   // Back
+        atlas.getBlockTexture(block_type, .Side),   // Front
+        atlas.getBlockTexture(block_type, .Side),   // Left
+        atlas.getBlockTexture(block_type, .Side),   // Right
+        atlas.getBlockTexture(block_type, .Bottom), // Bottom
+        atlas.getBlockTexture(block_type, .Top),    // Top
+    };
+
+    // Add each face with corresponding texture coordinates
+    try addFace(vertices, position, 0, face_ids[0], atlas);  // Back
+    try addFace(vertices, position, 6, face_ids[1], atlas);  // Front
+    try addFace(vertices, position, 12, face_ids[2], atlas); // Left
+    try addFace(vertices, position, 18, face_ids[3], atlas); // Right
+    try addFace(vertices, position, 24, face_ids[4], atlas); // Bottom
+    try addFace(vertices, position, 30, face_ids[5], atlas); // Top
+}
+
+// Add a specific face for a block
+fn addFace(vertices: *std.ArrayList(Vertex), position: [3]f32, face_start: usize, texture_id: u32, atlas: *const TextureAtlas) !void {
+    // Get texture coordinates for this face from the atlas
+    const uvs = atlas.getFaceCoords(texture_id);
+    
+    // Add 6 vertices for the face (2 triangles)
+    for (0..6) |i| {
+        const base_index = face_start + i;
+        
+        // Create a new vertex with:
+        // 1. Position from basic_voxel_vertices offset by block position
+        // 2. Normal unchanged from basic_voxel_vertices
+        // 3. UVs from texture atlas
+        try vertices.append(.{
+            .position = .{
+                basic_voxel_vertices[base_index].position[0] + position[0],
+                basic_voxel_vertices[base_index].position[1] + position[1],
+                basic_voxel_vertices[base_index].position[2] + position[2],
+            },
+            .normal = basic_voxel_vertices[base_index].normal,
+            .uv = .{ uvs[i % 6][0], uvs[i % 6][1] },
+        });
+    }
 }
 
 pub const basic_voxel_vertices = [_]Vertex{
