@@ -186,7 +186,6 @@ pub fn runLoop(self: *Application) !void {
         // which is whenever the camera moves
         var viewM = camera.getViewMatrix();
         zm.storeMat(&view, viewM);
-        // cube_mesh.shader.setMat4f("view", view);
         basic_voxel_mesh_shader.setMat4f("u_view", view);
 
         // TODO: This projection could just be calculated up front 
@@ -196,7 +195,6 @@ pub fn runLoop(self: *Application) !void {
         const aspect_ratio: f32 = @as(f32, @floatFromInt(window_size[0])) / @as(f32, @floatFromInt(window_size[1]));
         const projectionM = zm.perspectiveFovRhGl(Utils.radians(camera.zoom), aspect_ratio, 0.1, 1000.0);
         zm.storeMat(&projection, projectionM);
-        // cube_mesh.shader.setMat4f("projection",  projection);
         basic_voxel_mesh_shader.setMat4f("u_projection", projection);
 
         if (wireframe) {
