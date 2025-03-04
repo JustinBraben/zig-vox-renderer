@@ -1,7 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const testing = std.testing;
-const TypeId = std.meta.TypeId;
 
 const Registry = @This();
 
@@ -360,7 +359,7 @@ test "view components" {
     try registry.emplace(entity3, Position{ .x = 5.0, .y = 6.0 });
 
     // Create a view for entities with Position (const) and Velocity (var)
-    var entity_view = registry.view(.{Position}, .{Velocity});
+    var entity_view = registry.view(.{Position, Velocity}, .{});
     defer entity_view.deinit();
 
     // TODO: Add iterating functionality
