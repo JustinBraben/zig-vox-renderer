@@ -119,7 +119,6 @@ pub fn runLoop(self: *Application) !void {
 
     // Initialize the texture atlas
     var texture_atlas = try Atlas.initFromPath("assets/textures/blocks.png", 16, 16); // 16x16 texture grid
-    // try texture_atlas.load("assets/textures/blocks.png");
 
     var world = try World.init(self.allocator);
     defer world.deinit();
