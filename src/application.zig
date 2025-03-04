@@ -260,6 +260,7 @@ pub fn runLoop(self: *Application) !void {
         zgui.setNextWindowSize(.{ .w = 0.0, .h = 0.0, .cond = .first_use_ever });
         if (zgui.begin("Debug Window", .{})) {
             _ = zgui.checkbox("wireframe", .{ .v = &wireframe });
+            _ = zgui.text("Camera Pos x:{d} y:{d} z:{d}", .{camera.position[0], camera.position[1], camera.position[2]});
             _ = zgui.dragFloat("shininess", .{ .v = &shininess, .min = 16.0, .max = 128.0 });
             if (zgui.dragFloat3("light direction", .{ .v = &light_direction, .min = -1.0, .max = 1.0, })) {
                 // cube_mesh.shader.setVec3f("light.direction",  light_direction);
