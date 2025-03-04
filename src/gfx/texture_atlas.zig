@@ -53,12 +53,27 @@ pub fn getTextureCoords(self: TextureAtlas, texture_id: BlockTexture) [4][2]f32 
     
     // Return texture coordinates for the four corners
     // Format: [bottom-left, bottom-right, top-right, top-left]
+
     return .{
         .{ x1, y2 }, // bottom-left
         .{ x2, y2 }, // bottom-right
         .{ x2, y1 }, // top-right
         .{ x1, y1 }, // top-left
     };
+
+    // return .{
+    //     .{ x1, y2 }, // bottom-left
+    //     .{ x2, y2 }, // bottom-right
+    //     .{ x2, y1 }, // top-right
+    //     .{ x1, y1 }, // top-left
+    // };
+
+    // return .{
+    //     .{ x2, y1 }, // bottom-left
+    //     .{ x2, y2 }, // bottom-right
+    //     .{ x1, y1 }, // top-right
+    //     .{ x1, y2 }, // top-left
+    // };
 }
 
 // Get texture coordinates for a face, ready to be used in triangles

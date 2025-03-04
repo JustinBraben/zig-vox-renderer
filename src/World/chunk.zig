@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const zmath = @import("zmath");
 const Mesh = @import("../Models/mesh.zig");
 const Vertex = Mesh.Vertex;
+const TextureAtlas = @import("../gfx/texture_atlas.zig");
 
 const Chunk = @This();
 
@@ -17,7 +18,7 @@ pub const ChunkPos = struct {
         const chunk_size_f32: f32 = @floatFromInt(CHUNK_SIZE);
         return .{
             .x = @intFromFloat(@floor(world_x / chunk_size_f32)),
-            .y = @intFromFloat(@floor(world_z / chunk_size_f32)),
+            .z = @intFromFloat(@floor(world_z / chunk_size_f32)),
         };
     }
     
@@ -80,30 +81,6 @@ pub fn init(allocator: Allocator, pos: ChunkPos) !*Chunk {
     return chunk;
 }
 
-// pub fn init(allocator: Allocator, pos: ChunkPos) !Chunk {
-//     var chunk: Chunk = undefined;
-
-//     chunk = .{
-//         .pos = pos,
-//         .blocks = undefined,
-//         .mesh = null,
-//         .is_dirty = true,
-//         .is_empty = false,
-//         .allocator = allocator,
-//     };
-
-//     // Initialize blocks with air (id 0)
-//     for (&chunk.blocks) |*x_slice| {
-//         for (x_slice) |*y_slice| {
-//             for (y_slice) |*block| {
-//                 block.* = Block{ .id = 0 };
-//             }
-//         }
-//     }
-
-//     return chunk;
-// }
-
 pub fn deinit(self: *Chunk) void {
     if (self.mesh) |*mesh| {
         mesh.deinit();
@@ -120,7 +97,8 @@ pub fn setBlock(self: *Chunk, x: usize, y: usize, z: usize, block: Block) void {
     self.is_dirty = true; // Mark chunk for mesh rebuild
 }
 
-pub fn generateMesh(self: *Chunk) !void {
+pub fn generateMesh(self: *Chunk, atlas: *const TextureAtlas) !void {
+    // _ = atlas;
     // Skip if the chunk is not dirty
     if (!self.is_dirty) return;
 
@@ -160,6 +138,9 @@ pub fn generateMesh(self: *Chunk) !void {
                 const local_x: f32 = @floatFromInt(x);
                 const local_y: f32 = @floatFromInt(y);
                 const local_z: f32 = @floatFromInt(z);
+                // _ = local_x;
+                // _ = local_y;
+                // _ = local_z;
 
                 for (directions, 0..) |dir, dir_idx| {
                     // Position of the adjacent block in world coordinates
@@ -192,8 +173,9 @@ pub fn generateMesh(self: *Chunk) !void {
                     // In a complete implementation, you would check neighboring chunks
 
                     if (is_transparent) {
-                        // Add face vertices to the mesh
-                        // Select the appropriate face based on direction
+
+                        // First, add face vertices to the mesh
+                        const base_index = vertices.items.len;
                         switch (dir_idx) {
                             0 => try addFaceVertices(&vertices, local_x, local_y, local_z, .back),
                             1 => try addFaceVertices(&vertices, local_x, local_y, local_z, .front),
@@ -202,6 +184,33 @@ pub fn generateMesh(self: *Chunk) !void {
                             4 => try addFaceVertices(&vertices, local_x, local_y, local_z, .bottom),
                             5 => try addFaceVertices(&vertices, local_x, local_y, local_z, .top),
                             else => unreachable,
+                        }
+                        
+                        // Then update UVs for the newly added vertices
+                        if (vertices.items.len >= base_index + 6) {
+                            // Get slice of the 6 vertices we just added
+                            const face_slice = vertices.items[base_index..base_index+6];
+                            
+                            // Get texture ID based on face type
+                            const texture_id: TextureAtlas.BlockTexture = switch (dir_idx) {
+                                0, 1, 2, 3 => .DIRT_SIDE,
+                                4 => .DIRT_BOTTOM,
+                                5 => .DIRT_TOP,
+                                else => unreachable,
+                            };
+                            
+                            // Update UVs for this face
+                            const uvs = atlas.getFaceCoords(texture_id);
+                            
+                            // Triangle 1
+                            face_slice[0].uv = .{ uvs[0][0], uvs[0][1] }; // bottom-left
+                            face_slice[1].uv = .{ uvs[1][0], uvs[1][1] }; // bottom-right
+                            face_slice[2].uv = .{ uvs[2][0], uvs[2][1] }; // top-right
+
+                            // Triangle 1
+                            face_slice[3].uv = .{ uvs[4][0], uvs[4][1] }; // bottom-left
+                            face_slice[4].uv = .{ uvs[5][0], uvs[5][1] }; // top-right
+                            face_slice[5].uv = .{ uvs[3][0], uvs[3][1] }; // top-left
                         }
                     }
                 }

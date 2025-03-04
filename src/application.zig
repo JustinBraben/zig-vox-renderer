@@ -127,7 +127,7 @@ pub fn runLoop(self: *Application) !void {
     basic_chunk.setBlock(1, 1, 1, .{ .id = 1 });
     basic_chunk.setBlock(5, 5, 5, .{ .id = 1 });
     basic_chunk.setBlock(6, 6, 6, .{ .id = 1 });
-    try basic_chunk.generateMesh();
+    try basic_chunk.generateMesh(&global_texture_atlas);
 
     var basic_voxel_mesh = Mesh.init();
     defer basic_voxel_mesh.deinit();
@@ -244,8 +244,6 @@ pub fn runLoop(self: *Application) !void {
         // gl.bindTexture(gl.TEXTURE_CUBE_MAP, dirt_cube_map_texture);
         // gl.drawArraysInstanced(gl.TRIANGLES, 0, 36, @intCast(world.model_matrices.items.len));
         // cube_mesh.unbindVAO();
-        basic_voxel_mesh.vao.bind();
-        gl.activeTexture(gl.TEXTURE0);
         // // Back face (vertices 0-5)
         // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.back);
         // gl.drawArrays(gl.TRIANGLES, 0, 6);
@@ -270,9 +268,9 @@ pub fn runLoop(self: *Application) !void {
         // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.top);
         // gl.drawArrays(gl.TRIANGLES, 30, 6);
         // // basic_voxel_mesh.draw();
+        gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, global_texture_atlas.texture_id);
         basic_voxel_mesh.draw();
-        basic_voxel_mesh.vao.unbind();
 
         // Render one chunk
         if (basic_chunk.mesh) |*mesh| {

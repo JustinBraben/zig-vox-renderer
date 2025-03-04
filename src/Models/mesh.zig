@@ -98,29 +98,27 @@ pub fn setBasicVoxel(self: *Mesh, atlas: *const TextureAtlas) void {
     }
     
     // Update UVs for each face based on texture atlas
-    updateFaceUVs(&vertices, 0, atlas, TextureAtlas.BlockTexture.DIRT_SIDE);   // Back face
-    updateFaceUVs(&vertices, 6, atlas, TextureAtlas.BlockTexture.DIRT_SIDE);  // Front face
-    updateFaceUVs(&vertices, 12, atlas, TextureAtlas.BlockTexture.DIRT_SIDE);  // Left face
-    updateFaceUVs(&vertices, 18, atlas, TextureAtlas.BlockTexture.DIRT_SIDE); // Right face
-    updateFaceUVs(&vertices, 24, atlas, TextureAtlas.BlockTexture.DIRT_BOTTOM); // Bottom face
-    updateFaceUVs(&vertices, 30, atlas, TextureAtlas.BlockTexture.DIRT_TOP);   // Top face
+    updateFaceUVs(&vertices, 0, atlas, .DIRT_SIDE);   // Back face
+    updateFaceUVs(&vertices, 6, atlas, .DIRT_SIDE);  // Front face
+    updateFaceUVs(&vertices, 12, atlas, .DIRT_SIDE);  // Left face
+    updateFaceUVs(&vertices, 18, atlas, .DIRT_SIDE); // Right face
+    updateFaceUVs(&vertices, 24, atlas, .DIRT_BOTTOM); // Bottom face
+    updateFaceUVs(&vertices, 30, atlas, .DIRT_TOP);   // Top face
     
     self.uploadData(&vertices);
 }
 
 // Update UVs for a specific face with texture atlas coordinates
-fn updateFaceUVs(vertices: *[36]Vertex, start_idx: usize, atlas: *const TextureAtlas, texture_id: TextureAtlas.BlockTexture) void {
+pub fn updateFaceUVs(vertices: []Vertex, start_idx: usize, atlas: *const TextureAtlas, texture_id: TextureAtlas.BlockTexture) void {
+    // Make sure there are enough vertices
+    if (start_idx + 6 > vertices.len) return;
+    
     const uvs = atlas.getFaceCoords(texture_id);
     
     // Triangle 1
     vertices[start_idx + 0].uv = .{ uvs[0][0], uvs[0][1] }; // bottom-left
     vertices[start_idx + 1].uv = .{ uvs[1][0], uvs[1][1] }; // bottom-right
     vertices[start_idx + 2].uv = .{ uvs[2][0], uvs[2][1] }; // top-right
-    
-    // // Triangle 2
-    // vertices[start_idx + 3].uv = .{ uvs[3][0], uvs[3][1] }; // bottom-left
-    // vertices[start_idx + 4].uv = .{ uvs[4][0], uvs[4][1] }; // top-right
-    // vertices[start_idx + 5].uv = .{ uvs[5][0], uvs[5][1] }; // top-left
 
     // Triangle 2
     vertices[start_idx + 3].uv = .{ uvs[4][0], uvs[4][1] }; // bottom-left
