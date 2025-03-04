@@ -7,7 +7,7 @@ const Atlas = @import("../gfx/atlas.zig");
 
 const Chunk = @This();
 
-pub const CHUNK_SIZE = 16; // Dimensions of a chunk (16x16x16 blocks)
+pub const CHUNK_SIZE = 32; // Dimensions of a chunk (32x32x32 blocks)
 pub const RENDER_DISTANCE = 8; // Number of chunks to render in each direction
 
 pub const ChunkPos = struct {
