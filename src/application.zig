@@ -131,6 +131,11 @@ pub fn runLoop(self: *Application) !void {
     basic_chunk.setBlock(10, 10, 10, .{ .id = 1 });
     try basic_chunk.generateMesh(&texture_atlas);
 
+    // var world = try World.init(self.allocator);
+    // defer world.deinit();
+    // try world.generate(&texture_atlas);
+    // var basic_chunk = world.chunks.getLast();
+
     var basic_voxel_mesh = Mesh.init();
     defer basic_voxel_mesh.deinit();
     basic_voxel_mesh.setBasicVoxel(&texture_atlas);

@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const zm = @import("zmath");
 const znoise = @import("znoise");
 const Chunk = @import("chunk.zig");
+const Atlas = @import("../gfx/atlas.zig");
 const Utils = @import("../utils.zig");
 
 const World = @This();
@@ -26,6 +27,17 @@ pub fn init(gpa: Allocator) !World {
         .gen = gen,
         .chunks = std.ArrayList(Chunk).init(gpa),
     };
+}
+
+pub fn generate(self: *World, atlas: *const Atlas) !void {
+    try self.chunks.append(Chunk.init(self.allocator, .{ .x = 0, .z = -1 }));
+    var basic_chunk = self.chunks.getLast();
+    basic_chunk.setBlock(1, 1, 1, .{ .id = 1 });
+    basic_chunk.setBlock(5, 5, 5, .{ .id = 1 });
+    basic_chunk.setBlock(6, 6, 6, .{ .id = 1 });
+    basic_chunk.setBlock(8, 10, 10, .{ .id = 1 });
+    basic_chunk.setBlock(10, 10, 10, .{ .id = 1 });
+    try basic_chunk.generateMesh(atlas);
 }
 
 // pub fn generate(self: *World) !void {

@@ -3,7 +3,7 @@ const Allocator = std.mem.Allocator;
 const zmath = @import("zmath");
 const Mesh = @import("../models/mesh.zig");
 const Vertex = Mesh.Vertex;
-const TextureAtlas = @import("../gfx/atlas.zig");
+const Atlas = @import("../gfx/atlas.zig");
 
 const Chunk = @This();
 
@@ -93,7 +93,7 @@ pub fn setBlock(self: *Chunk, x: usize, y: usize, z: usize, block: Block) void {
     self.is_dirty = true; // Mark chunk for mesh rebuild
 }
 
-pub fn generateMesh(self: *Chunk, atlas: *const TextureAtlas) !void {
+pub fn generateMesh(self: *Chunk, atlas: *const Atlas) !void {
     // Skip if the chunk is not dirty or empty
     if (!self.is_dirty or self.is_empty) return;
 
@@ -181,7 +181,7 @@ pub fn generateMesh(self: *Chunk, atlas: *const TextureAtlas) !void {
                             const face_slice = vertices.items[base_index..base_index+6];
                             
                             // Get texture ID based on face type
-                            const texture_id: TextureAtlas.BlockTexture = switch (dir_idx) {
+                            const texture_id: Atlas.BlockTexture = switch (dir_idx) {
                                 0, 1, 2, 3 => .DIRT_SIDE,
                                 4 => .DIRT_BOTTOM,
                                 5 => .DIRT_TOP,
