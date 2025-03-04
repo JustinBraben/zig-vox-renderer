@@ -127,6 +127,8 @@ pub fn runLoop(self: *Application) !void {
     basic_chunk.setBlock(1, 1, 1, .{ .id = 1 });
     basic_chunk.setBlock(5, 5, 5, .{ .id = 1 });
     basic_chunk.setBlock(6, 6, 6, .{ .id = 1 });
+    basic_chunk.setBlock(8, 10, 10, .{ .id = 1 });
+    basic_chunk.setBlock(10, 10, 10, .{ .id = 1 });
     try basic_chunk.generateMesh(&global_texture_atlas);
 
     var basic_voxel_mesh = Mesh.init();
