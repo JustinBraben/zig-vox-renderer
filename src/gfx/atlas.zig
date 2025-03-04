@@ -1,12 +1,12 @@
 const std = @import("std");
-const Utils = @import("../utils.zig");
+const Texture = @import("texture.zig");
 
 const Atlas = @This();
 
 // Atlas size in tiles (e.g., 16x16 for 256 different textures)
 width: u32,
 height: u32,
-texture_id: u32, // OpenGL texture ID
+texture: Texture,
 
 pub const BlockTexture = enum(u32) {
     DIRT_TOP = 0,
@@ -23,17 +23,12 @@ pub const TextureIDs = struct {
     // Add more block texture IDs as needed
 };
 
-pub fn init(atlas_width: u32, atlas_height: u32) Atlas {
+pub fn initFromPath(file_path: [:0]const u8, atlas_width: u32, atlas_height: u32) !Atlas {
     return .{
         .width = atlas_width,
         .height = atlas_height,
-        .texture_id = 0,
+        .texture = try Texture.initFromPath(file_path)
     };
-}
-
-// Load the atlas texture
-pub fn load(self: *Atlas, file_path: [:0]const u8) !void {
-    self.texture_id = try Utils.loadTexture(file_path);
 }
 
 // Calculate texture coordinates for a specific tile in the atlas

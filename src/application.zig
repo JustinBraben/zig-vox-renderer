@@ -116,8 +116,8 @@ pub fn runLoop(self: *Application) !void {
     const skybox_cube_map_texture = try Utils.loadCubemap(skybox);
 
     // Initialize the texture atlas
-    var texture_atlas = Atlas.init(16, 16); // 16x16 texture grid
-    try texture_atlas.load("assets/textures/blocks.png");
+    var texture_atlas = try Atlas.initFromPath("assets/textures/blocks.png", 16, 16); // 16x16 texture grid
+    // try texture_atlas.load("assets/textures/blocks.png");
 
     var basic_chunk = try Chunk.init(self.allocator, .{ .x = 0, .z = -1 });
     defer basic_chunk.deinit();
@@ -204,7 +204,7 @@ pub fn runLoop(self: *Application) !void {
 
         // cubes
         gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, texture_atlas.texture_id);
+        texture_atlas.texture.bind();
         basic_voxel_mesh.draw();
 
         // Render one chunk
@@ -229,7 +229,7 @@ pub fn runLoop(self: *Application) !void {
             basic_voxel_mesh_shader.setMat4f("u_model", zm.matToArr(chunk_model));
 
             gl.activeTexture(gl.TEXTURE0);
-            gl.bindTexture(gl.TEXTURE_2D, texture_atlas.texture_id);
+            texture_atlas.texture.bind();
             mesh.draw();
         }
 

@@ -2,7 +2,6 @@ const std = @import("std");
 const zopengl = @import("zopengl");
 const zstbi = @import("zstbi");
 const gl = zopengl.bindings;
-const Utils = @import("../utils.zig");
 
 const Texture = @This();
 
@@ -10,7 +9,7 @@ width: u32,
 height: u32,
 id: gl.Uint = 0, // OpenGL texture ID
 
-pub fn createFromPixels(pixels: []u8, width: u32, height: u32, internalFormat: gl.Enum) Texture {
+pub fn initFromPixels(pixels: []u8, width: u32, height: u32, internalFormat: gl.Enum) Texture {
     var textureID: gl.Uint  = undefined;
     gl.genTextures(1, &textureID);
     gl.bindTexture(gl.TEXTURE_2D, textureID);
@@ -40,7 +39,7 @@ pub fn createFromPixels(pixels: []u8, width: u32, height: u32, internalFormat: g
     };
 }
 
-pub fn initFromPath(path: [:0]const u8) Texture {
+pub fn initFromPath(path: [:0]const u8) !Texture {
     var texture_image = try zstbi.Image.loadFromFile(path, 0);
     defer texture_image.deinit();
 
@@ -51,7 +50,7 @@ pub fn initFromPath(path: [:0]const u8) Texture {
         else => unreachable,
     };
     
-    return createFromPixels(texture_image.data, texture_image.width, texture_image.height, format);
+    return initFromPixels(texture_image.data, texture_image.width, texture_image.height, format);
 }
 
 pub fn deinit(self: *Texture) void {
