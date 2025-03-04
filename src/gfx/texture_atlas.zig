@@ -60,20 +60,6 @@ pub fn getTextureCoords(self: TextureAtlas, texture_id: BlockTexture) [4][2]f32 
         .{ x2, y1 }, // top-right
         .{ x1, y1 }, // top-left
     };
-
-    // return .{
-    //     .{ x1, y2 }, // bottom-left
-    //     .{ x2, y2 }, // bottom-right
-    //     .{ x2, y1 }, // top-right
-    //     .{ x1, y1 }, // top-left
-    // };
-
-    // return .{
-    //     .{ x2, y1 }, // bottom-left
-    //     .{ x2, y2 }, // bottom-right
-    //     .{ x1, y1 }, // top-right
-    //     .{ x1, y2 }, // top-left
-    // };
 }
 
 // Get texture coordinates for a face, ready to be used in triangles
@@ -90,45 +76,3 @@ pub fn getFaceCoords(self: TextureAtlas, texture_id: BlockTexture) [6][2]f32 {
         coords[3], // top-left
     };
 }
-
-
-// // Example of how to create and use a basic voxel mesh with texture atlas
-// pub fn createBasicVoxelMesh(atlas: *TextureAtlas) Mesh {
-//     var mesh = Mesh.init();
-    
-//     // Define vertex positions (unchanged from your current code)
-//     const positions = [_]f32{
-//         // Same cube vertices as before
-//         // ...
-//     };
-    
-//     // Define texture coordinates using the atlas
-//     var tex_coords = [_]f32{};
-//     const texture_ids = [_]u32{
-//         // Back face
-//         TextureAtlas.TextureIDs.dirt_side,
-//         // Front face
-//         TextureAtlas.TextureIDs.dirt_side,
-//         // Left face
-//         TextureAtlas.TextureIDs.dirt_side,
-//         // Right face
-//         TextureAtlas.TextureIDs.dirt_side,
-//         // Bottom face
-//         TextureAtlas.TextureIDs.dirt_bottom,
-//         // Top face
-//         TextureAtlas.TextureIDs.dirt_top,
-//     };
-    
-//     // Generate texture coordinates for all faces
-//     for (texture_ids, 0..) |id, i| {
-//         const face_coords = atlas.getFaceCoords(id);
-//         // Flatten the coordinates and add them to the tex_coords array
-//         // This depends on how you organize your vertex data
-//     }
-    
-//     // Set up the mesh with these coordinates
-//     mesh.setPositions(positions);
-//     mesh.setTextureCoords(tex_coords);
-    
-//     return mesh;
-// }

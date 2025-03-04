@@ -105,52 +105,6 @@ pub fn runLoop(self: *Application) !void {
     // try world.generate();
     // defer world.deinit();
 
-    // set up vertex data (and buffer(s)) and configure vertex attributes
-    // ------------------------------------------------------------------
-    // Pass it the vertex shader and fragment shader
-    // var cube_mesh = CubeMesh.init(self.allocator, "assets/shaders/voxel_instance_vert.glsl", "assets/shaders/voxel_instance_frag.glsl");
-    // defer cube_mesh.deinit();
-
-    // cube_mesh.bindVAO();
-    // try cube_mesh.addVBO(3, cube_mesh.vertex_positions);
-    // try cube_mesh.addVBO(3, cube_mesh.normal_positions);
-    // try cube_mesh.addVBO(2, cube_mesh.texture_coords);
-    // try cube_mesh.addInstanceVBO(4, world.flattened_matrices);
-    // cube_mesh.unbindVAO();
-
-    // Initialize the texture atlas
-    var global_texture_atlas = TextureAtlas.init(16, 16); // 16x16 texture grid
-    try global_texture_atlas.load("assets/textures/blocks.png");
-
-    var basic_chunk = try Chunk.init(self.allocator, .{ .x = 0, .z = -1 });
-    defer basic_chunk.deinit();
-    basic_chunk.setBlock(1, 1, 1, .{ .id = 1 });
-    basic_chunk.setBlock(5, 5, 5, .{ .id = 1 });
-    basic_chunk.setBlock(6, 6, 6, .{ .id = 1 });
-    basic_chunk.setBlock(8, 10, 10, .{ .id = 1 });
-    basic_chunk.setBlock(10, 10, 10, .{ .id = 1 });
-    try basic_chunk.generateMesh(&global_texture_atlas);
-
-    var basic_voxel_mesh = Mesh.init();
-    defer basic_voxel_mesh.deinit();
-    basic_voxel_mesh.setBasicVoxel(&global_texture_atlas);
-    var basic_voxel_mesh_shader = Shader.create(self.allocator, "assets/shaders/basic_voxel_mesh_vert.glsl", "assets/shaders/basic_voxel_mesh_frag.glsl");
-
-
-    var skybox_mesh = SkyboxMesh.init(self.allocator, "assets/shaders/skybox_vert.glsl", "assets/shaders/skybox_frag.glsl");
-    defer skybox_mesh.deinit();
-    skybox_mesh.bindVAO();
-    try skybox_mesh.addVBO(3, skybox_mesh.vertex_positions);
-    skybox_mesh.unbindVAO();
-
-    // const dirt = &.{
-    //     "assets/textures/dirt/right.jpg",
-    //     "assets/textures/dirt/left.jpg",
-    //     "assets/textures/dirt/top.jpg",
-    //     "assets/textures/dirt/bottom.jpg",
-    //     "assets/textures/dirt/front.jpg",
-    //     "assets/textures/dirt/back.jpg",
-    // };
     const skybox = &.{
         "assets/textures/skybox/right.jpg",
         "assets/textures/skybox/left.jpg",
@@ -159,18 +113,32 @@ pub fn runLoop(self: *Application) !void {
         "assets/textures/skybox/front.jpg",
         "assets/textures/skybox/back.jpg",
     };
-
-    // // Load all textures for dirt blocks
-    // const dirt_texture: DirtTextures = try .{
-    //     .right = try Utils.loadTexture("assets/textures/dirt/right.jpg"),
-    //     .left = try Utils.loadTexture("assets/textures/dirt/left.jpg"),
-    //     .top = try Utils.loadTexture("assets/textures/dirt/top.jpg"),
-    //     .bottom = try Utils.loadTexture("assets/textures/dirt/bottom.jpg"),
-    //     .front = try Utils.loadTexture("assets/textures/dirt/front.jpg"),
-    //     .back = try Utils.loadTexture("assets/textures/dirt/back.jpg"),
-    // };
-
     const skybox_cube_map_texture = try Utils.loadCubemap(skybox);
+
+    // Initialize the texture atlas
+    var texture_atlas = TextureAtlas.init(16, 16); // 16x16 texture grid
+    try texture_atlas.load("assets/textures/blocks.png");
+
+    var basic_chunk = try Chunk.init(self.allocator, .{ .x = 0, .z = -1 });
+    defer basic_chunk.deinit();
+    basic_chunk.setBlock(1, 1, 1, .{ .id = 1 });
+    basic_chunk.setBlock(5, 5, 5, .{ .id = 1 });
+    basic_chunk.setBlock(6, 6, 6, .{ .id = 1 });
+    basic_chunk.setBlock(8, 10, 10, .{ .id = 1 });
+    basic_chunk.setBlock(10, 10, 10, .{ .id = 1 });
+    try basic_chunk.generateMesh(&texture_atlas);
+
+    var basic_voxel_mesh = Mesh.init();
+    defer basic_voxel_mesh.deinit();
+    basic_voxel_mesh.setBasicVoxel(&texture_atlas);
+    var basic_voxel_mesh_shader = Shader.create(self.allocator, "assets/shaders/basic_voxel_mesh_vert.glsl", "assets/shaders/basic_voxel_mesh_frag.glsl");
+
+
+    var skybox_mesh = SkyboxMesh.init(self.allocator, "assets/shaders/skybox_vert.glsl", "assets/shaders/skybox_frag.glsl");
+    defer skybox_mesh.deinit();
+    skybox_mesh.bindVAO();
+    try skybox_mesh.addVBO(3, skybox_mesh.vertex_positions);
+    skybox_mesh.unbindVAO();
 
     var wireframe: bool = false;
     var light_direction: [3]f32 = .{ 0.0, -1.0, -1.0 };
@@ -206,13 +174,7 @@ pub fn runLoop(self: *Application) !void {
         gl.clearColor(0.1, 0.1, 0.1, 1.0);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-        // // draw scene as normal
-        // cube_mesh.shader.use();
-        // cube_mesh.shader.setVec3f("light.direction",  light_direction);
-        // cube_mesh.shader.setFloat("material.shininess", shininess);
-        // const tz_viewPos = ztracy.ZoneN(@src(), "cube_mesh.shader.setVec3f(\"viewPos\", camera.getViewPos())");
-        // cube_mesh.shader.setVec3f("viewPos", camera.getViewPos());
-        // tz_viewPos.End();
+        // draw scene as normal
         basic_voxel_mesh_shader.use();
         basic_voxel_mesh_shader.setMat4f("u_model", zm.matToArr(zm.identity()));
         basic_voxel_mesh_shader.setVec3f("u_viewPos", camera.getViewPos());
@@ -240,38 +202,9 @@ pub fn runLoop(self: *Application) !void {
             gl.polygonMode(gl.FRONT_AND_BACK, gl.FILL);
         }
 
-        // // cubes
-        // cube_mesh.bindVAO();
-        // gl.activeTexture(gl.TEXTURE0);
-        // gl.bindTexture(gl.TEXTURE_CUBE_MAP, dirt_cube_map_texture);
-        // gl.drawArraysInstanced(gl.TRIANGLES, 0, 36, @intCast(world.model_matrices.items.len));
-        // cube_mesh.unbindVAO();
-        // // Back face (vertices 0-5)
-        // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.back);
-        // gl.drawArrays(gl.TRIANGLES, 0, 6);
-
-        // // Front face (vertices 6-11)
-        // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.front);
-        // gl.drawArrays(gl.TRIANGLES, 6, 6);
-
-        // // Left face (vertices 12-17)
-        // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.left);
-        // gl.drawArrays(gl.TRIANGLES, 12, 6);
-
-        // // Right face (vertices 18-23)
-        // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.right);
-        // gl.drawArrays(gl.TRIANGLES, 18, 6);
-
-        // // Bottom face (vertices 24-29)
-        // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.bottom);
-        // gl.drawArrays(gl.TRIANGLES, 24, 6);
-
-        // // Top face (vertices 30-35)
-        // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.top);
-        // gl.drawArrays(gl.TRIANGLES, 30, 6);
-        // // basic_voxel_mesh.draw();
+        // cubes
         gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, global_texture_atlas.texture_id);
+        gl.bindTexture(gl.TEXTURE_2D, texture_atlas.texture_id);
         basic_voxel_mesh.draw();
 
         // Render one chunk
@@ -296,60 +229,8 @@ pub fn runLoop(self: *Application) !void {
             basic_voxel_mesh_shader.setMat4f("u_model", zm.matToArr(chunk_model));
 
             gl.activeTexture(gl.TEXTURE0);
-            gl.bindTexture(gl.TEXTURE_2D, global_texture_atlas.texture_id);
+            gl.bindTexture(gl.TEXTURE_2D, texture_atlas.texture_id);
             mesh.draw();
-            // mesh.vao.bind();
-            
-            // // Back face (vertices 0-5)
-            // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.back);
-            // gl.drawArrays(gl.TRIANGLES, 0, 6);
-
-            // // Front face (vertices 6-11)
-            // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.front);
-            // gl.drawArrays(gl.TRIANGLES, 6, 6);
-
-            // // Left face (vertices 12-17)
-            // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.left);
-            // gl.drawArrays(gl.TRIANGLES, 12, 6);
-
-            // // Right face (vertices 18-23)
-            // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.right);
-            // gl.drawArrays(gl.TRIANGLES, 18, 6);
-
-            // // Bottom face (vertices 24-29)
-            // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.bottom);
-            // gl.drawArrays(gl.TRIANGLES, 24, 6);
-
-            // // Top face (vertices 30-35)
-            // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.top);
-            // gl.drawArrays(gl.TRIANGLES, 30, 6);
-
-            // // Back face (vertices 0-5)
-            // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.back);
-            // gl.drawArrays(gl.TRIANGLES, 36, 6);
-
-            // // Front face (vertices 6-11)
-            // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.front);
-            // gl.drawArrays(gl.TRIANGLES, 42, 6);
-
-            // // Left face (vertices 12-17)
-            // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.left);
-            // gl.drawArrays(gl.TRIANGLES, 48, 6);
-
-            // // Right face (vertices 18-23)
-            // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.right);
-            // gl.drawArrays(gl.TRIANGLES, 54, 6);
-
-            // // Bottom face (vertices 24-29)
-            // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.bottom);
-            // gl.drawArrays(gl.TRIANGLES, 60, 6);
-
-            // // Top face (vertices 30-35)
-            // gl.bindTexture(gl.TEXTURE_2D, dirt_texture.top);
-            // gl.drawArrays(gl.TRIANGLES, 66, 6);
-
-            // mesh.draw();
-            // mesh.vao.unbind();
         }
 
         // draw skybox as last
