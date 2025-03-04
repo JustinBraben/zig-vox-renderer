@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const zmath = @import("zmath");
-const Mesh = @import("../Models/mesh.zig");
+const Mesh = @import("../models/mesh.zig");
 const Vertex = Mesh.Vertex;
 const TextureAtlas = @import("../gfx/texture_atlas.zig");
 

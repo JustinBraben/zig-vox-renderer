@@ -13,11 +13,11 @@ const Shader = @import("shader.zig");
 const Utils = @import("utils.zig");
 const VAO = @import("vao.zig");
 const VBO = @import("vbo.zig");
-const CubeMesh = @import("Models/cube_mesh.zig");
-const SkyboxMesh = @import("Models/skybox_mesh.zig");
-const Mesh = @import("Models/mesh.zig");
-const World = @import("World/world.zig");
-const Chunk = @import("World/chunk.zig");
+const CubeMesh = @import("models/cube_mesh.zig");
+const SkyboxMesh = @import("models/skybox_mesh.zig");
+const Mesh = @import("models/mesh.zig");
+const World = @import("world/world.zig");
+const Chunk = @import("world/chunk.zig");
 const TextureAtlas = @import("gfx/texture_atlas.zig");
 
 pub const ConfigOptions = struct {
