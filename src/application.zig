@@ -18,7 +18,7 @@ const SkyboxMesh = @import("models/skybox_mesh.zig");
 const Mesh = @import("models/mesh.zig");
 const World = @import("world/world.zig");
 const Chunk = @import("world/chunk.zig");
-const TextureAtlas = @import("gfx/texture_atlas.zig");
+const Atlas = @import("gfx/atlas.zig");
 
 pub const ConfigOptions = struct {
     width: i32 = 1280,
@@ -116,7 +116,7 @@ pub fn runLoop(self: *Application) !void {
     const skybox_cube_map_texture = try Utils.loadCubemap(skybox);
 
     // Initialize the texture atlas
-    var texture_atlas = TextureAtlas.init(16, 16); // 16x16 texture grid
+    var texture_atlas = Atlas.init(16, 16); // 16x16 texture grid
     try texture_atlas.load("assets/textures/blocks.png");
 
     var basic_chunk = try Chunk.init(self.allocator, .{ .x = 0, .z = -1 });

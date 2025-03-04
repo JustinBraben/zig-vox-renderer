@@ -1,7 +1,7 @@
 const std = @import("std");
 const Utils = @import("../utils.zig");
 
-const TextureAtlas = @This();
+const Atlas = @This();
 
 // Atlas size in tiles (e.g., 16x16 for 256 different textures)
 width: u32,
@@ -23,7 +23,7 @@ pub const TextureIDs = struct {
     // Add more block texture IDs as needed
 };
 
-pub fn init(atlas_width: u32, atlas_height: u32) TextureAtlas {
+pub fn init(atlas_width: u32, atlas_height: u32) Atlas {
     return .{
         .width = atlas_width,
         .height = atlas_height,
@@ -32,12 +32,12 @@ pub fn init(atlas_width: u32, atlas_height: u32) TextureAtlas {
 }
 
 // Load the atlas texture
-pub fn load(self: *TextureAtlas, file_path: [:0]const u8) !void {
+pub fn load(self: *Atlas, file_path: [:0]const u8) !void {
     self.texture_id = try Utils.loadTexture(file_path);
 }
 
 // Calculate texture coordinates for a specific tile in the atlas
-pub fn getTextureCoords(self: TextureAtlas, texture_id: BlockTexture) [4][2]f32 {
+pub fn getTextureCoords(self: Atlas, texture_id: BlockTexture) [4][2]f32 {
     const tile_width = 1.0 / @as(f32, @floatFromInt(self.width));
     const tile_height = 1.0 / @as(f32, @floatFromInt(self.height));
     
@@ -63,7 +63,7 @@ pub fn getTextureCoords(self: TextureAtlas, texture_id: BlockTexture) [4][2]f32 
 }
 
 // Get texture coordinates for a face, ready to be used in triangles
-pub fn getFaceCoords(self: TextureAtlas, texture_id: BlockTexture) [6][2]f32 {
+pub fn getFaceCoords(self: Atlas, texture_id: BlockTexture) [6][2]f32 {
     const coords = self.getTextureCoords(texture_id);
     
     // Convert the four corner coordinates to six vertices (two triangles)

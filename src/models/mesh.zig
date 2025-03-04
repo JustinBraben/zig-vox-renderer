@@ -5,7 +5,7 @@ const gl = zopengl.bindings;
 const Shader = @import("../gfx/shader.zig");
 const VAO = @import("../gfx/vao.zig");
 const VBO = @import("../gfx/vbo.zig");
-const TextureAtlas = @import("../gfx/texture_atlas.zig");
+const TextureAtlas = @import("../gfx/atlas.zig");
 
 const Mesh = @This();
 

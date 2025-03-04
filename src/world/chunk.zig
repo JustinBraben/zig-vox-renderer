@@ -3,7 +3,7 @@ const Allocator = std.mem.Allocator;
 const zmath = @import("zmath");
 const Mesh = @import("../models/mesh.zig");
 const Vertex = Mesh.Vertex;
-const TextureAtlas = @import("../gfx/texture_atlas.zig");
+const TextureAtlas = @import("../gfx/atlas.zig");
 
 const Chunk = @This();
 
