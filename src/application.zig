@@ -57,12 +57,12 @@ config: ConfigOptions,
 
 pub fn init(gpa: Allocator, config: ConfigOptions) !Application {
     try glfw.init();
-    glfw.windowHintTyped(.context_version_major, config.gl_major);
-    glfw.windowHintTyped(.context_version_minor, config.gl_minor);
-    glfw.windowHintTyped(.opengl_profile, .opengl_core_profile);
-    glfw.windowHintTyped(.opengl_forward_compat, true);
-    glfw.windowHintTyped(.client_api, .opengl_api);
-    glfw.windowHintTyped(.doublebuffer, true);
+    glfw.windowHint(.context_version_major, config.gl_major);
+    glfw.windowHint(.context_version_minor, config.gl_minor);
+    glfw.windowHint(.opengl_profile, .opengl_core_profile);
+    glfw.windowHint(.opengl_forward_compat, true);
+    glfw.windowHint(.client_api, .opengl_api);
+    glfw.windowHint(.doublebuffer, true);
 
     const window = try glfw.Window.create(config.width, config.height, "Voxel Renderer", null);
     glfw.makeContextCurrent(window);
@@ -98,7 +98,7 @@ pub fn deinit(self: *Application) void {
 }
 
 pub fn runLoop(self: *Application) !void {
-    self.turnOffMouse();
+    try self.turnOffMouse();
 
     // const height_range = 10.0;
     // var world = try World.init(self.allocator, height_range);
@@ -174,7 +174,7 @@ pub fn runLoop(self: *Application) !void {
         last_frame = current_frame;
 
         const tz_handle_events = ztracy.ZoneN(@src(), "Application.handleEvents(delta_time)");
-        self.handleEvents(delta_time);
+        try self.handleEvents(delta_time);
         tz_handle_events.End();
 
         // render
@@ -277,7 +277,7 @@ pub fn runLoop(self: *Application) !void {
     }
 }
 
-fn handleEvents(self: *Application, deltaTime: f32) void {
+fn handleEvents(self: *Application, deltaTime: f32) !void {
     if (self.window.getKey(.escape) == .press) {
         self.window.setShouldClose(true);
     }
@@ -285,10 +285,10 @@ fn handleEvents(self: *Application, deltaTime: f32) void {
     if (self.window.getKey(.c) == .press) {
         toggle_cursor = !toggle_cursor;
         if (toggle_cursor) {
-            self.window.setInputMode(.cursor, glfw.Cursor.Mode.normal);
+            try self.window.setInputMode(.cursor, glfw.Cursor.Mode.normal);
             return;
         } else {
-            self.window.setInputMode(.cursor, glfw.Cursor.Mode.disabled);
+            try self.window.setInputMode(.cursor, glfw.Cursor.Mode.disabled);
         }
     }
 
@@ -308,12 +308,12 @@ fn handleEvents(self: *Application, deltaTime: f32) void {
     }
 }
 
-fn turnOffMouse(self: *Application) void {
-    self.window.setInputMode(.cursor, glfw.Cursor.Mode.disabled);
+fn turnOffMouse(self: *Application) !void {
+    try self.window.setInputMode(.cursor, glfw.Cursor.Mode.disabled);
 }
 
-fn turnOnMouse(self: *Application) void {
-    self.window.setInputMode(.cursor, glfw.Cursor.Mode.normal);
+fn turnOnMouse(self: *Application) !void {
+    try self.window.setInputMode(.cursor, glfw.Cursor.Mode.normal);
 }
 
 fn mouse_callback(_: *glfw.Window, xposIn: f64, yposIn: f64) callconv(.C) void {
