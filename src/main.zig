@@ -15,3 +15,7 @@ pub fn main() !void {
     defer tracy_zone.End();
     try app.runLoop();
 }
+
+comptime {
+    _ = @import("entity/registry.zig");
+}
