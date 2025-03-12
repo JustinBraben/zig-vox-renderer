@@ -15,7 +15,7 @@ jobs:
         - uses: actions/checkout@v3
         - uses: mlugg/setup-zig@v1
           with:
-            version: 0.14.0-dev.1911+3bf89f55c
+            version: 0.14.0
         - name: Display Zig version
           run: zig version
         - name: Build and test
