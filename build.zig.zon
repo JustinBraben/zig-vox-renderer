@@ -5,8 +5,8 @@
     .minimum_zig_version = "0.14.0",
     .dependencies = .{
         .zmath = .{
-            .url = "https://github.com/zig-gamedev/zmath/archive/1745b6a7a4b9d275c4c948fbbb03568b8c72617d.tar.gz",
-            .hash = "zmath-0.11.0-dev-wjwiva80AwAYXBoySNnvX3FiQqrs8TcupymM9pHauLbN",
+            .url = "https://github.com/zig-gamedev/zmath/archive/ccf7297ef6c01e21b2d51ad81b5b6ce929e86a00.tar.gz",
+            .hash = "zmath-0.11.0-dev-wjwivZY1AwDO7yxNmZ5HWoU03f9mFBet8LN9-oYc3i29",
         },
         .zgui = .{
             .url = "https://github.com/zig-gamedev/zgui/archive/e8d6994cc43325c7dfaac69d27c9a7c27d0012c2.tar.gz",
@@ -17,20 +17,20 @@
             .hash = "zstbi-0.10.0-AAAAAH6VBwAJ6i_4SWBx2-RHcxpi5sfHMbaspaw6AZkq",
         },
         .zopengl = .{
-            .url = "https://github.com/zig-gamedev/zopengl/archive/14e69429d004013d806076317a350d43a27f036f.tar.gz",
-            .hash = "zopengl-0.6.0-dev-AAAAAOLvBwA3IFRrXtAVuQ94jVfUHvhrCVlflFDuZ86K",
+            .url = "https://github.com/zig-gamedev/zopengl/archive/67cd98449c9b766086531115f0ec6c4ace095af7.tar.gz",
+            .hash = "zopengl-0.6.0-dev-AAAAAAtUCADc6Ew_wTmTl_LRe3Z2lLK6WraJuGhT0bmj",
         },
         .zglfw = .{
-            .url = "https://github.com/zig-gamedev/zglfw/archive/88552fb644b1da55faf92a9ac13d6455d50349ef.tar.gz",
-            .hash = "zglfw-0.10.0-dev-zgVDNJaZIQA_apqUeB7ucb7MH7HuXyQHSrXOqkqN-lnT",
+            .url = "https://github.com/zig-gamedev/zglfw/archive/dcb1dae7d4a90f88b70dbae73300ab9b19fb250c.tar.gz",
+            .hash = "zglfw-0.10.0-dev-zgVDNJmZIQCIiO_94Sp5jqrPtz4Eumk3bDcxS7dSZfIj",
         },
         .znoise = .{
             .url = "https://github.com/zig-gamedev/znoise/archive/9c56051ce8aa915a20804e3948875331acefbf20.tar.gz",
             .hash = "znoise-0.3.0-dev-AAAAAMOjAQCOFsgDZuKi-L0_HGdrCb9HwVf00PDWRAVV",
         },
         .ztracy = .{
-            .url = "https://github.com/zig-gamedev/ztracy/archive/20a21d7d13a15ec49e07d42e65a7b2fcd89cd4b0.tar.gz",
-            .hash = "ztracy-0.14.0-dev-zHJSq1INFwC5N7MfdLa3JnX5JF4LNpuPfn54tFa3TcMm",
+            .url = "https://github.com/zig-gamedev/ztracy/archive/d6f78fe19497a5b341329f6f67e9f9ba38635e8e.tar.gz",
+            .hash = "ztracy-0.14.0-dev-zHJSq08NFwD4iNq3K_gFxZ7Y8mMQ5wVM494x8c4R2sMz",
         },
     },
     .paths = .{
