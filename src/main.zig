@@ -17,5 +17,7 @@ pub fn main() !void {
 }
 
 comptime {
+    _ = @import("entity/component.zig");
     _ = @import("entity/registry.zig");
+    _ = @import("entity/sparse_set.zig");
 }

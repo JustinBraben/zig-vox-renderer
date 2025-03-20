@@ -13,7 +13,7 @@ fn typeId(comptime T: type) usize {
 /// Maximum number of component types that can be registered
 const MAX_COMPONENT_TYPES = 64;
 
-pub fn Registry(comptime EntityT: type) type {
+pub fn BasicRegistry(comptime EntityT: type) type {
    return struct {
         const Self = @This();
         const ComponentInterface = IComponentStorage(EntityT);
@@ -167,9 +167,12 @@ pub fn Registry(comptime EntityT: type) type {
     }; 
 }
 
+// Default registry
+pub const Registry = BasicRegistry(u32);
+
 test "Registry - basic ECS functionality" {
     const allocator = testing.allocator;
-    var world = try Registry(u32).init(allocator);
+    var world = try Registry.init(allocator);
     defer world.deinit();
     
     const TestPosition = struct {
@@ -204,7 +207,7 @@ test "Registry - basic ECS functionality" {
 
 test "Registry - Many entities" {
     const allocator = testing.allocator;
-    var world = try Registry(u32).init(allocator);
+    var world = try Registry.init(allocator);
     defer world.deinit();
     
     const Hand = struct {
