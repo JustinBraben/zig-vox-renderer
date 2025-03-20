@@ -97,6 +97,7 @@ pub fn Registry(comptime EntityT: type) type {
         /// Add a component to an entity
         pub fn addComponent(self: *Self, entity: EntityT, component: anytype) !void {
             const ComponentT = @TypeOf(component);
+            try self.registerComponent(ComponentT);
             const id = typeId(ComponentT);
             
             // Find the component storage
@@ -166,9 +167,9 @@ pub fn Registry(comptime EntityT: type) type {
     }; 
 }
 
-// Add tests
-test "basic ECS functionality" {
-    var world = try Registry(u32).init(testing.allocator);
+test "Registry - basic ECS functionality" {
+    const allocator = testing.allocator;
+    var world = try Registry(u32).init(allocator);
     defer world.deinit();
     
     const TestPosition = struct {
@@ -180,9 +181,6 @@ test "basic ECS functionality" {
         x: f32,
         y: f32,
     };
-    
-    try world.registerComponent(TestPosition);
-    try world.registerComponent(TestVelocity);
     
     const entity = try world.createEntity();
     try world.addComponent(entity, TestPosition{ .x = 1, .y = 2 });
@@ -202,4 +200,26 @@ test "basic ECS functionality" {
     
     try world.destroyEntity(entity);
     try testing.expect(!world.hasComponent(entity, TestPosition));
+}
+
+test "Registry - Many entities" {
+    const allocator = testing.allocator;
+    var world = try Registry(u32).init(allocator);
+    defer world.deinit();
+    
+    const Hand = struct {
+        fingers: usize,
+    };
+    
+    const TestVelocity = struct {
+        x: f32,
+        y: f32,
+    };
+
+    for (0..100) |idx| {
+        const idx_f32: f32 = @floatFromInt(idx);
+        const entity = try world.createEntity();
+        try world.addComponent(entity, Hand{ .fingers = idx });
+        try world.addComponent(entity, TestVelocity{ .x = idx_f32, .y = idx_f32 });
+    }
 }
