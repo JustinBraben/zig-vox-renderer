@@ -29,8 +29,8 @@ pub fn BasicRegistry(comptime EntityT: type) type {
             return .{
                 .allocator = allocator,
                 .entity_counter = 0,
-                .component_storages = [_]?ComponentInterface{null} ** MAX_COMPONENT_TYPES,
-                .component_type_ids = [_]usize{0} ** MAX_COMPONENT_TYPES,
+                .component_storages = @splat(null),
+                .component_type_ids = @splat(0),
                 .component_count = 0,
                 .entities = SparseSet(EntityT).init(allocator),
             };
