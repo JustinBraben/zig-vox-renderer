@@ -29,16 +29,16 @@ pub fn init(gpa: Allocator) !World {
     };
 }
 
-pub fn generate(self: *World, atlas: *const Atlas) !void {
-    try self.chunks.append(Chunk.init(self.allocator, .{ .x = 0, .z = -1 }));
-    var basic_chunk = self.chunks.getLast();
-    basic_chunk.setBlock(1, 1, 1, .{ .id = 1 });
-    basic_chunk.setBlock(5, 5, 5, .{ .id = 1 });
-    basic_chunk.setBlock(6, 6, 6, .{ .id = 1 });
-    basic_chunk.setBlock(8, 10, 10, .{ .id = 1 });
-    basic_chunk.setBlock(10, 10, 10, .{ .id = 1 });
-    try basic_chunk.generateMesh(atlas);
-}
+// pub fn generate(self: *World, atlas: *const Atlas) !void {
+//     try self.chunks.append(Chunk.init(self.allocator, .{ .x = 0, .z = -1 }));
+//     var basic_chunk = self.chunks.getLast();
+//     basic_chunk.setBlock(1, 1, 1, .{ .id = 1 });
+//     basic_chunk.setBlock(5, 5, 5, .{ .id = 1 });
+//     basic_chunk.setBlock(6, 6, 6, .{ .id = 1 });
+//     basic_chunk.setBlock(8, 10, 10, .{ .id = 1 });
+//     basic_chunk.setBlock(10, 10, 10, .{ .id = 1 });
+//     try basic_chunk.generateMesh(atlas);
+// }
 
 // pub fn generate(self: *World) !void {
 //     // for (0..1000) |x_pos| {
@@ -90,4 +90,26 @@ pub fn deinit(self: *World) void {
         chunk.deinit();
     }
     self.chunks.deinit();
+}
+
+pub fn draw(self: *World) void {
+    for (self.chunks.items) |chunk| {
+        if (chunk.mesh) |*mesh| {
+            _ = mesh;
+            // const chunk_offset = chunk.pos.worldOffset();
+
+            // const chunk_model = zm.translation(
+            //     chunk_offset[0],
+            //     0.0,
+            //     chunk_offset[2]
+            // );
+            
+            // // Set the model matrix for the chunk
+            // basic_voxel_mesh_shader.setMat4f("u_model", zm.matToArr(chunk_model));
+
+            // gl.activeTexture(gl.TEXTURE0);
+            // texture_atlas.texture.bind();
+            // mesh.draw();
+        }
+    }
 }

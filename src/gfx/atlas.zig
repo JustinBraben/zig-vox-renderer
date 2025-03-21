@@ -31,6 +31,10 @@ pub fn initFromPath(file_path: [:0]const u8, atlas_width: u32, atlas_height: u32
     };
 }
 
+pub fn deinit(self: *Atlas) void {
+    self.texture.deinit();
+}
+
 // Calculate texture coordinates for a specific tile in the atlas
 pub fn getTextureCoords(self: Atlas, texture_id: BlockTexture) [4][2]f32 {
     const tile_width = 1.0 / @as(f32, @floatFromInt(self.width));
