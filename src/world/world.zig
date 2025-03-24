@@ -152,8 +152,9 @@ fn loadChunk(self: *World, pos: ChunkPos, chunk_manager: *ChunkManager) !void {
     chunk = try self.allocator.create(Chunk);
     chunk.* = Chunk.init(self.allocator, .{ .x = pos.x, .z = pos.z });
     
-    // Generate terrain
-    try chunk_manager.generateChunkTerrain(chunk);
+    // // Generate terrain
+    // try chunk_manager.generateChunkTerrain(chunk);
+    try chunk_manager.generateFlatChunkTerrain(chunk);
     
     // Generate mesh
     try chunk_manager.generateChunkMesh(chunk);
