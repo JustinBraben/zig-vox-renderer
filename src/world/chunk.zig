@@ -34,7 +34,7 @@ pub const ChunkPos = struct {
     pub fn equals(self: ChunkPos, other: ChunkPos) bool {
         return self.x == other.x and self.z == other.z;
     }
-    
+
     pub fn hash(self: ChunkPos) u64 {
         return @as(u64, @intCast(self.x)) << 32 | (@as(u64, @intCast(self.x)) & 0xFFFFFFFF);
     }
