@@ -159,7 +159,7 @@ pub fn getNeighboringBlock(self: *const Chunk, x: i32, y: i32, z: i32) ?Block {
     return .{ .id = .AIR };
 }
 
-pub fn generateMesh(self: *Chunk, atlas: *const Atlas) !void {
+pub fn generateMesh(self: *Chunk, atlas: *Atlas) !void {
     // Skip if the chunk is not dirty or empty
     if (!self.is_dirty or self.is_empty) return;
 

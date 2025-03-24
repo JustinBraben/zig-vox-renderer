@@ -22,7 +22,7 @@ comptime {
     _ = @import("entity/sparse_set.zig");
 
     // world
-    _ = @import("world/chunk_manager.zig");
+    // _ = @import("world/chunk_manager.zig");
     _ = @import("world/chunk.zig");
-    _ = @import("world/world.zig");
+    // _ = @import("world/world.zig");
 }

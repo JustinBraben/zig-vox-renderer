@@ -75,10 +75,10 @@ pub fn renderWorld(self: *Renderer, world: *World, chunk_manager: *ChunkManager,
     gl.activeTexture(gl.TEXTURE0);
     chunk_manager.texture_atlas.texture.bind();
 
-    var it = world.chunks.valueIterator();
-    while (it.next()) |chunk| {
-        if (chunk.*.*.mesh) |*mesh| {
-            const chunk_offset = chunk.*.*.pos.worldOffset();
+    var it = world.chunk_manager.chunks.valueIterator();
+    while (it.next()) |chunk_cache| {
+        if (chunk_cache.*.chunk.*.mesh) |*mesh| {
+            const chunk_offset = chunk_cache.*.chunk.*.pos.worldOffset();
             const chunk_model = zm.translation(
                 chunk_offset[0],
                 0.0,

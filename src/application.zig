@@ -100,11 +100,11 @@ pub fn runLoop(self: *Application) !void {
     // // var world = try World.init(self.allocator);
     // // defer world.deinit();
 
-    var world = try World.init(self.allocator);
-    defer world.deinit();
-    
     var chunk_manager = try ChunkManager.init(self.allocator, "assets/textures/blocks.png");
     defer chunk_manager.deinit();
+
+    var world = try World.init(self.allocator, &chunk_manager, null);
+    defer world.deinit();
     
     var renderer = try Renderer.init(self.allocator);
     defer renderer.deinit();
@@ -123,7 +123,8 @@ pub fn runLoop(self: *Application) !void {
         try self.handleEvents(delta_time);
 
         // NEW Update chunks around player
-        try world.updateChunksAroundPlayer(camera.getViewPos(), &chunk_manager);
+        try world.updateChunksAroundPlayer(camera.getViewPos());
+        // try world.updateChunksAroundPlayer(camera.getViewPos(), &chunk_manager);
 
         // render
         // ------

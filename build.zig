@@ -79,6 +79,8 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
     exe_unit_tests.root_module.addImport("zopengl", zopengl.module("root"));
+    exe_unit_tests.root_module.addImport("zstbi", zstbi.module("root"));
+    exe_unit_tests.linkLibrary(zstbi.artifact("zstbi"));
     exe_unit_tests.root_module.addImport("znoise", znoise.module("root"));
     exe_unit_tests.linkLibrary(znoise.artifact("FastNoiseLite"));
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
