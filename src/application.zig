@@ -106,7 +106,7 @@ pub fn runLoop(self: *Application) !void {
     var world = try World.init(self.allocator, &chunk_manager, null);
     defer world.deinit();
     
-    var renderer = try Renderer.init(self.allocator);
+    var renderer = try Renderer.init(self.allocator, "assets/textures/blocks.png");
     defer renderer.deinit();
 
     var wireframe: bool = false;
@@ -124,7 +124,6 @@ pub fn runLoop(self: *Application) !void {
 
         // NEW Update chunks around player
         try world.updateChunksAroundPlayer(camera.getViewPos());
-        // try world.updateChunksAroundPlayer(camera.getViewPos(), &chunk_manager);
 
         // render
         // ------
@@ -132,7 +131,7 @@ pub fn runLoop(self: *Application) !void {
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
         const window_size = self.window.getSize();
-        renderer.renderWorld(&world, &chunk_manager, window_size, &camera);
+        renderer.renderWorld(&world, window_size, &camera);
 
         const fb_size = self.window.getFramebufferSize();
         zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));

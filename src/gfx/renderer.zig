@@ -5,6 +5,7 @@ const zopengl = @import("zopengl");
 const gl = zopengl.bindings;
 const zm = @import("zmath");
 const Shader = @import("shader.zig");
+const Atlas = @import("atlas.zig");
 const SkyboxMesh = @import("../models/skybox_mesh.zig");
 const Utils = @import("../utils.zig");
 const Camera = @import("../camera.zig");
@@ -15,11 +16,12 @@ const Renderer = @This();
 
 allocator: Allocator,
 basic_voxel_mesh_shader: Shader,
+texture_atlas: Atlas,
 skybox_shader: Shader,
 skybox_texture: u32,
 skybox_mesh: SkyboxMesh,
 
-pub fn init(allocator: Allocator) !Renderer {
+pub fn init(allocator: Allocator, atlas_path: [:0]const u8) !Renderer {
     var skybox_mesh = SkyboxMesh.init(allocator, "assets/shaders/skybox_vert.glsl", "assets/shaders/skybox_frag.glsl");
     skybox_mesh.bindVAO();
     try skybox_mesh.addVBO(3, skybox_mesh.vertex_positions);
@@ -38,6 +40,7 @@ pub fn init(allocator: Allocator) !Renderer {
     return .{
         .allocator = allocator,
         .basic_voxel_mesh_shader = Shader.create(allocator, "assets/shaders/basic_voxel_mesh_vert.glsl", "assets/shaders/basic_voxel_mesh_frag.glsl"),
+        .texture_atlas = try Atlas.initFromPath(atlas_path, 16, 16),
         .skybox_shader = skybox_mesh.shader,
         .skybox_texture = skybox_texture,
         .skybox_mesh = skybox_mesh,
@@ -46,6 +49,7 @@ pub fn init(allocator: Allocator) !Renderer {
 
 pub fn deinit(self: *Renderer) void {
     self.skybox_mesh.deinit();
+    self.texture_atlas.texture.deinit();
 }
 
 pub fn setWireframe(_: *Renderer, wireframe_on: bool) void {
@@ -56,7 +60,7 @@ pub fn setWireframe(_: *Renderer, wireframe_on: bool) void {
     }
 }
 
-pub fn renderWorld(self: *Renderer, world: *World, chunk_manager: *ChunkManager, window_size: [2]c_int, camera: *Camera) void {
+pub fn renderWorld(self: *Renderer, world: *World, window_size: [2]c_int, camera: *Camera) void {
     const aspect_ratio: f32 = @as(f32, @floatFromInt(window_size[0])) / @as(f32, @floatFromInt(window_size[1]));
     const projection_matrix = zm.perspectiveFovRhGl(math.degreesToRadians(camera.zoom), aspect_ratio, 0.1, 1000.0);
     var projection: [16]f32 = undefined;
@@ -73,7 +77,7 @@ pub fn renderWorld(self: *Renderer, world: *World, chunk_manager: *ChunkManager,
     self.basic_voxel_mesh_shader.setInt("u_texture", 0);
     
     gl.activeTexture(gl.TEXTURE0);
-    chunk_manager.texture_atlas.texture.bind();
+    self.texture_atlas.texture.bind();
 
     var it = world.chunk_manager.chunks.valueIterator();
     while (it.next()) |chunk_cache| {
