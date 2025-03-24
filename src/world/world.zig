@@ -15,7 +15,7 @@ rng: std.Random.DefaultPrng,
 seed: i32,
 gen: znoise.FnlGenerator,
 chunks: std.AutoHashMap(ChunkPos, *Chunk),
-render_distance: i32 = 4,
+render_distance: i32 = 8,
 
 pub fn init(gpa: Allocator) !World {
     var rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
@@ -153,8 +153,6 @@ fn loadChunk(self: *World, pos: ChunkPos, chunk_manager: *ChunkManager) !void {
     var chunk: *Chunk = undefined;
     chunk = try self.allocator.create(Chunk);
     chunk.* = Chunk.init(self.allocator, .{ .x = pos.x, .z = pos.z });
-    // var chunk: Chunk = undefined;
-    // const chunk = Chunk.init(self.allocator, .{ .x = pos.x, .z = pos.z });
     
     // Generate terrain
     try chunk_manager.generateChunkTerrain(chunk);
@@ -171,26 +169,4 @@ fn unloadChunk(self: *World, pos: ChunkPos) !void {
     chunk.deinit();
     self.allocator.destroy(chunk);
     _ = self.chunks.remove(pos);
-}
-
-pub fn draw(self: *World) void {
-    for (self.chunks.items) |chunk| {
-        if (chunk.mesh) |*mesh| {
-            _ = mesh;
-            // const chunk_offset = chunk.pos.worldOffset();
-
-            // const chunk_model = zm.translation(
-            //     chunk_offset[0],
-            //     0.0,
-            //     chunk_offset[2]
-            // );
-            
-            // // Set the model matrix for the chunk
-            // basic_voxel_mesh_shader.setMat4f("u_model", zm.matToArr(chunk_model));
-
-            // gl.activeTexture(gl.TEXTURE0);
-            // texture_atlas.texture.bind();
-            // mesh.draw();
-        }
-    }
 }

@@ -49,9 +49,17 @@ pub fn deinit(self: *Renderer) void {
     self.skybox_mesh.deinit();
 }
 
+pub fn setWireframe(_: *Renderer, wireframe_on: bool) void {
+    if (wireframe_on) {
+        gl.polygonMode(gl.FRONT_AND_BACK, gl.LINE);
+    } else {
+        gl.polygonMode(gl.FRONT_AND_BACK, gl.FILL);
+    }
+}
+
 pub fn renderWorld(self: *Renderer, world: *World, chunk_manager: *ChunkManager, window_size: [2]c_int, camera: *Camera) void {
     const aspect_ratio: f32 = @as(f32, @floatFromInt(window_size[0])) / @as(f32, @floatFromInt(window_size[1]));
-    const projection_matrix = zm.perspectiveFovRhGl(Utils.radians(camera.zoom), aspect_ratio, 0.1, 1000.0);
+    const projection_matrix = zm.perspectiveFovRhGl(math.degreesToRadians(camera.zoom), aspect_ratio, 0.1, 1000.0);
     var projection: [16]f32 = undefined;
     zm.storeMat(&projection, projection_matrix);
     
@@ -82,20 +90,6 @@ pub fn renderWorld(self: *Renderer, world: *World, chunk_manager: *ChunkManager,
             mesh.draw();
         }
     }
-    
-    // for (world.chunks.items) |*chunk| {
-    //     if (chunk.mesh) |*mesh| {
-    //         const chunk_offset = chunk.pos.worldOffset();
-    //         const chunk_model = zm.translation(
-    //             chunk_offset[0],
-    //             0.0,
-    //             chunk_offset[2]
-    //         );
-            
-    //         self.basic_voxel_mesh_shader.setMat4f("u_model", zm.matToArr(chunk_model));
-    //         mesh.draw();
-    //     }
-    // }
     
     // Render skybox
     self.renderSkybox(view, projection);

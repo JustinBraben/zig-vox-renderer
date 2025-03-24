@@ -37,14 +37,14 @@ pub fn generateChunkTerrain(_: *ChunkManager, chunk: *Chunk) !void {
                 if (y == 0) {
                     chunk.setBlock(x, y, z, .{ .id = 7 });
                 } 
-                // Dirt for most layers
-                else if (y < height - 1) {
-                    chunk.setBlock(x, y, z, .{ .id = 3 });
-                } 
-                // Grass on top
-                else {
-                    chunk.setBlock(x, y, z, .{ .id = 2 });
-                }
+                // // Dirt for most layers
+                // else if (y < height - 1) {
+                //     chunk.setBlock(x, y, z, .{ .id = 3 });
+                // } 
+                // // Grass on top
+                // else {
+                //     chunk.setBlock(x, y, z, .{ .id = 2 });
+                // }
             }
         }
     }
