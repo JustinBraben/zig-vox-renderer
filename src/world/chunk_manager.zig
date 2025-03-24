@@ -56,7 +56,6 @@ pub fn generateFlatChunkTerrain(_: *ChunkManager, chunk: *Chunk) !void {
 
 pub fn generateChunkTerrain(self: *ChunkManager, chunk: *Chunk) !void {
     // Constants to tune the terrain generation
-    // Test
     const NOISE_SCALE = 0.05;     // Controls detail level (smaller = more detailed)
     const NOISE_THRESHOLD = 0.0;  // Threshold for placing blocks (-1 to 1 range)
 
