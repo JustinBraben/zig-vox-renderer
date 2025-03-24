@@ -3,6 +3,8 @@ const Allocator = std.mem.Allocator;
 const zm = @import("zmath");
 const znoise = @import("znoise");
 const Chunk = @import("chunk.zig");
+const ChunkPos = Chunk.ChunkPos;
+const ChunkManager = @import("chunk_manager.zig");
 const Atlas = @import("../gfx/atlas.zig");
 const Utils = @import("../utils.zig");
 
@@ -12,7 +14,8 @@ allocator: Allocator,
 rng: std.Random.DefaultPrng,
 seed: i32,
 gen: znoise.FnlGenerator,
-chunks: std.ArrayList(Chunk),
+chunks: std.AutoHashMap(ChunkPos, *Chunk),
+render_distance: i32 = 4,
 
 pub fn init(gpa: Allocator) !World {
     var rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
@@ -25,7 +28,7 @@ pub fn init(gpa: Allocator) !World {
         .rng = rng,
         .seed = seed,
         .gen = gen,
-        .chunks = std.ArrayList(Chunk).init(gpa),
+        .chunks = std.AutoHashMap(ChunkPos, *Chunk).init(gpa),
     };
 }
 
@@ -86,10 +89,88 @@ pub fn init(gpa: Allocator) !World {
 // }
 
 pub fn deinit(self: *World) void {
-    for (self.chunks.items) |*chunk| {
-        chunk.deinit();
+    var it = self.chunks.iterator();
+    while (it.next()) |entry| {
+        entry.value_ptr.*.deinit();
+        self.allocator.destroy(entry.value_ptr.*);
     }
     self.chunks.deinit();
+}
+
+pub fn updateChunksAroundPlayer(self: *World, player_pos: [3]f32, chunk_manager: *ChunkManager) !void {
+    // Calculate which chunk the player is in
+    const player_chunk_x: i32 = @intFromFloat(@floor(player_pos[0] / Chunk.CHUNK_SIZE));
+    const player_chunk_z: i32 = @intFromFloat(@floor(player_pos[2] / Chunk.CHUNK_SIZE));
+    
+    // Track chunks to unload
+    var chunks_to_keep = std.AutoHashMap(ChunkPos, void).init(self.allocator);
+    defer chunks_to_keep.deinit();
+
+    // Determine which chunks should be loaded
+    var chunk_x = player_chunk_x - self.render_distance;
+    while (chunk_x <= player_chunk_x + self.render_distance) : (chunk_x += 1) {
+        var chunk_z = player_chunk_z - self.render_distance;
+        while (chunk_z <= player_chunk_z + self.render_distance) : (chunk_z += 1) {
+            const pos = ChunkPos{ .x = chunk_x, .z = chunk_z };
+            
+            // Calculate distance from player chunk
+            const dx = chunk_x - player_chunk_x;
+            const dz = chunk_z - player_chunk_z;
+            const distance_squared = dx * dx + dz * dz;
+            
+            // Skip if outside circular render distance
+            if (distance_squared > self.render_distance * self.render_distance) {
+                continue;
+            }
+            
+            // Mark this chunk to keep
+            try chunks_to_keep.put(pos, {});
+            
+            // Load chunk if not already loaded
+            if (!self.chunks.contains(pos)) {
+                try self.loadChunk(pos, chunk_manager);
+            }
+        }
+    }
+    
+    // Unload chunks outside render distance
+    var it = self.chunks.iterator();
+    var chunks_to_unload = std.ArrayList(ChunkPos).init(self.allocator);
+    defer chunks_to_unload.deinit();
+    
+    while (it.next()) |entry| {
+        if (!chunks_to_keep.contains(entry.key_ptr.*)) {
+            try chunks_to_unload.append(entry.key_ptr.*);
+        }
+    }
+    
+    for (chunks_to_unload.items) |pos| {
+        try self.unloadChunk(pos);
+    }
+}
+
+fn loadChunk(self: *World, pos: ChunkPos, chunk_manager: *ChunkManager) !void {
+    var chunk: *Chunk = undefined;
+    chunk = try self.allocator.create(Chunk);
+    chunk.* = Chunk.init(self.allocator, .{ .x = pos.x, .z = pos.z });
+    // var chunk: Chunk = undefined;
+    // const chunk = Chunk.init(self.allocator, .{ .x = pos.x, .z = pos.z });
+    
+    // Generate terrain
+    try chunk_manager.generateChunkTerrain(chunk);
+    
+    // Generate mesh
+    try chunk_manager.generateChunkMesh(chunk);
+    
+    // Store in world
+    try self.chunks.put(pos, chunk);
+}
+
+fn unloadChunk(self: *World, pos: ChunkPos) !void {
+    const chunk = self.chunks.get(pos) orelse return;
+    chunk.deinit();
+    self.allocator.destroy(chunk);
+    _ = self.chunks.remove(pos);
 }
 
 pub fn draw(self: *World) void {

@@ -186,8 +186,8 @@ pub fn runLoop(self: *Application) !void {
 
         try self.handleEvents(delta_time);
 
-        // // NEW Update chunks around player
-        // try world.updateChunksAroundPlayer(camera.position, &chunk_manager);
+        // NEW Update chunks around player
+        try world.updateChunksAroundPlayer(camera.getViewPos(), &chunk_manager);
 
         // render
         // ------

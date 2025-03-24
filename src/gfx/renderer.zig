@@ -67,10 +67,11 @@ pub fn renderWorld(self: *Renderer, world: *World, chunk_manager: *ChunkManager,
     
     gl.activeTexture(gl.TEXTURE0);
     chunk_manager.texture_atlas.texture.bind();
-    
-    for (world.chunks.items) |*chunk| {
-        if (chunk.mesh) |*mesh| {
-            const chunk_offset = chunk.pos.worldOffset();
+
+    var it = world.chunks.valueIterator();
+    while (it.next()) |chunk| {
+        if (chunk.*.*.mesh) |*mesh| {
+            const chunk_offset = chunk.*.*.pos.worldOffset();
             const chunk_model = zm.translation(
                 chunk_offset[0],
                 0.0,
@@ -81,6 +82,20 @@ pub fn renderWorld(self: *Renderer, world: *World, chunk_manager: *ChunkManager,
             mesh.draw();
         }
     }
+    
+    // for (world.chunks.items) |*chunk| {
+    //     if (chunk.mesh) |*mesh| {
+    //         const chunk_offset = chunk.pos.worldOffset();
+    //         const chunk_model = zm.translation(
+    //             chunk_offset[0],
+    //             0.0,
+    //             chunk_offset[2]
+    //         );
+            
+    //         self.basic_voxel_mesh_shader.setMat4f("u_model", zm.matToArr(chunk_model));
+    //         mesh.draw();
+    //     }
+    // }
     
     // Render skybox
     self.renderSkybox(view, projection);

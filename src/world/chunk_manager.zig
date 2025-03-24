@@ -28,9 +28,9 @@ pub fn generateChunkTerrain(_: *ChunkManager, chunk: *Chunk) !void {
     const height = 5; // Flat terrain height
     
     var x: u32 = 0;
-    while (x < Chunk.SIZE) : (x += 1) {
+    while (x < Chunk.CHUNK_SIZE) : (x += 1) {
         var z: u32 = 0;
-        while (z < Chunk.SIZE) : (z += 1) {
+        while (z < Chunk.CHUNK_SIZE) : (z += 1) {
             var y: u32 = 0;
             while (y < height) : (y += 1) {
                 // Bedrock at bottom layer
