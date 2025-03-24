@@ -5,8 +5,6 @@ const znoise = @import("znoise");
 const Chunk = @import("chunk.zig");
 const ChunkPos = Chunk.ChunkPos;
 const ChunkManager = @import("chunk_manager.zig");
-const Atlas = @import("../gfx/atlas.zig");
-const Utils = @import("../utils.zig");
 
 const World = @This();
 

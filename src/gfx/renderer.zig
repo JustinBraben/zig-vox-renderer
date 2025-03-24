@@ -4,7 +4,6 @@ const math = std.math;
 const zopengl = @import("zopengl");
 const gl = zopengl.bindings;
 const zm = @import("zmath");
-const Chunk = @import("../world/chunk.zig");
 const Shader = @import("shader.zig");
 const SkyboxMesh = @import("../models/skybox_mesh.zig");
 const Utils = @import("../utils.zig");
