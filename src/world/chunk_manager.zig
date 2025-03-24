@@ -1,6 +1,5 @@
 //! Chunk Manager
-//! owns texture_atlas
-//! manages chunk creation
+//! Manages chunk lifecycle, loading, unloading, and caching
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const znoise = @import("znoise");
@@ -36,19 +35,14 @@ pub fn deinit(self: *ChunkManager) void {
 
 /// Simple flat terrain with some blocks
 pub fn generateFlatChunkTerrain(_: *ChunkManager, chunk: *Chunk) !void {
-    // Example: Simple flat terrain with some blocks
-    const height = 8; // Flat terrain height
-
     var x: u32 = 0;
     while (x < Chunk.CHUNK_SIZE) : (x += 1) {
-        var z: u32 = 0;
-        while (z < Chunk.CHUNK_SIZE) : (z += 1) {
-            var y: u32 = 0;
-            while (y < height) : (y += 1) {
+        var y: u32 = 0;
+        while (y < Chunk.CHUNK_SIZE) : (y += 1) {
+            var z: u32 = 0;
+            while (z < Chunk.CHUNK_SIZE) : (z += 1) {
                 // Just dirt for now
-                if (y == 0) {
-                    chunk.setBlock(x, y, z, .{ .id = 1 });
-                }
+                chunk.setBlock(x, y, z, .{ .id = .GRASS });
             }
         }
     }

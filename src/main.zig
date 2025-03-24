@@ -20,4 +20,9 @@ comptime {
     _ = @import("entity/component.zig");
     _ = @import("entity/registry.zig");
     _ = @import("entity/sparse_set.zig");
+
+    // world
+    _ = @import("world/chunk_manager.zig");
+    _ = @import("world/chunk.zig");
+    _ = @import("world/world.zig");
 }

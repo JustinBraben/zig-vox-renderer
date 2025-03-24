@@ -1,9 +1,12 @@
+//! Chunk
+//! fundamental data structure for a chunk
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const zmath = @import("zmath");
 const Mesh = @import("../models/mesh.zig");
 const Vertex = Mesh.Vertex;
 const Atlas = @import("../gfx/atlas.zig");
+const Block = @import("block.zig");
 
 const Chunk = @This();
 
@@ -40,13 +43,6 @@ pub const ChunkPos = struct {
     }
 };
 
-pub const Block = struct {
-    // Block type, properties, etc.
-    id: u16,
-    // Maybe add more properties later
-};
-
-
 pos: ChunkPos,
 blocks: [CHUNK_SIZE][CHUNK_SIZE][CHUNK_SIZE]Block,
 mesh: ?Mesh = null,
@@ -55,6 +51,8 @@ is_dirty: bool,
 /// Flag to indicate if the chunk has any visible blocks
 is_empty: bool,
 allocator: Allocator,
+/// Neighbors for mesh generation (only assigned when needed)
+neighbors: [6]?*Chunk = [_]?*Chunk{null} ** 6,
 
 pub fn init(allocator: Allocator, pos: ChunkPos) Chunk {
     var chunk: Chunk = .{
@@ -70,7 +68,7 @@ pub fn init(allocator: Allocator, pos: ChunkPos) Chunk {
     for (&chunk.blocks) |*x_slice| {
         for (x_slice) |*y_slice| {
             for (y_slice) |*block| {
-                block.* = Block{ .id = 0 };
+                block.* = Block{ .id = .AIR };
             }
         }
     }
@@ -91,6 +89,74 @@ pub fn getBlock(self: *Chunk, x: usize, y: usize, z: usize) Block {
 pub fn setBlock(self: *Chunk, x: usize, y: usize, z: usize, block: Block) void {
     self.blocks[x][y][z] = block;
     self.is_dirty = true; // Mark chunk for mesh rebuild
+}
+
+/// Check if coordinates are valid for this chunk
+pub fn isValidCoord(x: usize, y: usize, z: usize) bool {
+    return x < CHUNK_SIZE and y < CHUNK_SIZE and z < CHUNK_SIZE;
+}
+
+/// Set a neighbor chunk for accurate boundary mesh generation
+pub fn setNeighbor(self: *Chunk, direction: Direction, chunk: ?*Chunk) void {
+    self.neighbors[@intFromEnum(direction)] = chunk;
+    // If we're setting a neighbor, we might need to update our mesh
+    self.is_dirty = true;
+}
+
+pub const Direction = enum(u8) {
+    north = 0, // +z
+    south = 1, // -z
+    west = 2,  // -x
+    east = 3,  // +x
+    down = 4,  // -y
+    up = 5,    // +y
+};
+
+/// Get a block potentially from a neighboring chunk
+pub fn getNeighboringBlock(self: *const Chunk, x: i32, y: i32, z: i32) ?Block {
+    // Check if inside this chunk
+    if (x >= 0 and x < CHUNK_SIZE and 
+        y >= 0 and y < CHUNK_SIZE and 
+        z >= 0 and z < CHUNK_SIZE) {
+        return self.blocks[@intCast(x)][@intCast(y)][@intCast(z)];
+    }
+    
+    // Determine which neighbor we need
+    var direction: Direction = undefined;
+    var nx: i32 = x;
+    var ny: i32 = y;
+    var nz: i32 = z;
+    
+    if (x < 0) {
+        direction = .west;
+        nx = CHUNK_SIZE - 1;
+    } else if (x >= CHUNK_SIZE) {
+        direction = .east;
+        nx = 0;
+    } else if (y < 0) {
+        direction = .down;
+        ny = CHUNK_SIZE - 1;
+    } else if (y >= CHUNK_SIZE) {
+        direction = .up;
+        ny = 0;
+    } else if (z < 0) {
+        direction = .south;
+        nz = CHUNK_SIZE - 1;
+    } else if (z >= CHUNK_SIZE) {
+        direction = .north;
+        nz = 0;
+    } else {
+        unreachable; // Should have been caught in the first check
+    }
+    
+    // Check if we have that neighbor
+    const neighbor_chunk = self.neighbors[@intFromEnum(direction)];
+    if (neighbor_chunk) |chunk| {
+        return chunk.blocks[@intCast(nx)][@intCast(ny)][@intCast(nz)];
+    }
+    
+    // No neighbor, assume air
+    return .{ .id = .AIR };
 }
 
 pub fn generateMesh(self: *Chunk, atlas: *const Atlas) !void {
@@ -117,14 +183,9 @@ pub fn generateMesh(self: *Chunk, atlas: *const Atlas) !void {
         for (x_slice, 0..) |y_slice, y| {
             for (y_slice, 0..) |block, z| {
                 // Skip air blocks (id 0)
-                if (block.id == 0) continue;
+                if (block.id == .AIR) continue;
 
                 has_visible_blocks = true;
-
-                // World position of this block
-                const world_x: i32 = @as(i32, @intCast(x)) + self.pos.x * CHUNK_SIZE;
-                const world_y: i32 = @as(i32, @intCast(y));
-                const world_z: i32 = @as(i32, @intCast(z)) + self.pos.z * CHUNK_SIZE;
 
                 // Local position for vertex offset within the chunk
                 const local_x: f32 = @floatFromInt(x);
@@ -132,61 +193,27 @@ pub fn generateMesh(self: *Chunk, atlas: *const Atlas) !void {
                 const local_z: f32 = @floatFromInt(z);
 
                 for (directions, 0..) |dir, dir_idx| {
-                    // Position of the adjacent block in world coordinates
-                    const adj_x = world_x + dir[0];
-                    const adj_y = world_y + dir[1];
-                    const adj_z = world_z + dir[2];
+                    // Position of the adjacent block
+                    const adj_x = @as(i32, @intCast(x)) + dir[0];
+                    const adj_y = @as(i32, @intCast(y)) + dir[1];
+                    const adj_z = @as(i32, @intCast(z)) + dir[2];
 
-                    // Check if the adjacent block is empty (air) or outside the chunk
-                    var is_transparent = true;
-
-                    // Convert world coordinates to chunk + local coordinates
-                    const adj_chunk_x = @divFloor(adj_x, @as(i32, CHUNK_SIZE));
-                    const adj_chunk_z = @divFloor(adj_z, @as(i32, CHUNK_SIZE));
-                    const adj_local_x = @mod(adj_x, @as(i32, CHUNK_SIZE));
-                    const adj_local_y = adj_y; // Y doesn't change with chunks
-                    const adj_local_z = @mod(adj_z, @as(i32, CHUNK_SIZE));
-
-                    // Check if adjacent position is in this chunk
-                    if (adj_chunk_x == self.pos.x and adj_chunk_z == self.pos.z) {
-                        // Make sure we're in bounds
-                        if (adj_local_x >= 0 and adj_local_x < CHUNK_SIZE and
-                            adj_local_y >= 0 and adj_local_y < CHUNK_SIZE and 
-                            adj_local_z >= 0 and adj_local_z < CHUNK_SIZE) {
-                            // Get the block from this chunk
-                            const adj_block = self.blocks[@intCast(adj_local_x)][@intCast(adj_local_y)][@intCast(adj_local_z)];
-                            is_transparent = adj_block.id == 0;
-                        }
-                    }
-                    // For blocks at chunk boundaries, we'll always render the face for now
-                    // In a complete implementation, you would check neighboring chunks
+                    // Get the adjacent block, checking neighbors if needed
+                    const adj_block_opt = self.getNeighboringBlock(adj_x, adj_y, adj_z);
+                    const is_transparent = if (adj_block_opt) |adj_block| adj_block.isTransparent() else true;
 
                     if (is_transparent) {
-
                         // First, add face vertices to the mesh
                         const base_index = vertices.items.len;
-                        switch (dir_idx) {
-                            0 => try addFaceVertices(&vertices, local_x, local_y, local_z, .back),
-                            1 => try addFaceVertices(&vertices, local_x, local_y, local_z, .front),
-                            2 => try addFaceVertices(&vertices, local_x, local_y, local_z, .left),
-                            3 => try addFaceVertices(&vertices, local_x, local_y, local_z, .right),
-                            4 => try addFaceVertices(&vertices, local_x, local_y, local_z, .bottom),
-                            5 => try addFaceVertices(&vertices, local_x, local_y, local_z, .top),
-                            else => unreachable,
-                        }
-                        
+                        try addFaceVertices(&vertices, local_x, local_y, local_z, @enumFromInt(dir_idx));
+
                         // Then update UVs for the newly added vertices
                         if (vertices.items.len >= base_index + 6) {
                             // Get slice of the 6 vertices we just added
                             const face_slice = vertices.items[base_index..base_index+6];
                             
-                            // Get texture ID based on face type
-                            const texture_id: Atlas.BlockTexture = switch (dir_idx) {
-                                0, 1, 2, 3 => .DIRT_SIDE,
-                                4 => .DIRT_BOTTOM,
-                                5 => .DIRT_TOP,
-                                else => unreachable,
-                            };
+                            // Get texture ID based on block type and face
+                            const texture_id = getTextureForBlock(block, @enumFromInt(dir_idx));
                             
                             // Update UVs for this face
                             const uvs = atlas.getFaceCoords(texture_id);
@@ -196,7 +223,7 @@ pub fn generateMesh(self: *Chunk, atlas: *const Atlas) !void {
                             face_slice[1].uv = .{ uvs[1][0], uvs[1][1] }; // bottom-right
                             face_slice[2].uv = .{ uvs[2][0], uvs[2][1] }; // top-right
 
-                            // Triangle 1
+                            // Triangle 2
                             face_slice[3].uv = .{ uvs[4][0], uvs[4][1] }; // bottom-left
                             face_slice[4].uv = .{ uvs[5][0], uvs[5][1] }; // top-right
                             face_slice[5].uv = .{ uvs[3][0], uvs[3][1] }; // top-left
@@ -224,48 +251,29 @@ pub fn generateMesh(self: *Chunk, atlas: *const Atlas) !void {
     self.is_dirty = false;
 }
 
-// Face type enum for readability
-const FaceType = enum {
-    front,
-    back,
-    left,
-    right,
-    top,
-    bottom,
-};
+/// Select the appropriate texture for a block based on block type and face
+fn getTextureForBlock(block: Block, face: Direction) Atlas.BlockTexture {
+    return switch (@intFromEnum(block.id)) {
+        // 0 => .AIR, // Should never happen
+        1 => switch (face) { // Grass block
+            .up => .DIRT_TOP,
+            .down => .DIRT_BOTTOM,
+            else => .DIRT_SIDE,
+        },
+        // 2 => .DIRT_SIDE, // Dirt
+        // 3 => .STONE, // Stone
+        // 4 => .SAND, // Sand
+        // 5 => .WATER, // Water
+        else => .DIRT_SIDE, // Default fallback
+    };
+}
 
 // Helper function to add vertices for a specific face of a block
-fn addFaceVertices(vertices: *std.ArrayList(Vertex), x: f32, y: f32, z: f32, face_type: FaceType) !void {
+fn addFaceVertices(vertices: *std.ArrayList(Vertex), x: f32, y: f32, z: f32, face_type: Direction) !void {
     // Select the appropriate face vertices based on face type
     var face_vertices: [6]Vertex = undefined;
-    
-    // Copy the basic vertices from the template and offset them
-    switch (face_type) {
-        .back => {
-            // Copy the back face vertices (vertices 0-5)
-            face_vertices = basicFaceVertices(.back);
-        },
-        .front => {
-            // Copy the front face vertices (vertices 6-11)
-            face_vertices = basicFaceVertices(.front);
-        },
-        .left => {
-            // Copy the left face vertices (vertices 12-17)
-            face_vertices = basicFaceVertices(.left);
-        },
-        .right => {
-            // Copy the right face vertices (vertices 18-23)
-            face_vertices = basicFaceVertices(.right);
-        },
-        .bottom => {
-            // Copy the bottom face vertices (vertices 24-29)
-            face_vertices = basicFaceVertices(.bottom);
-        },
-        .top => {
-            // Copy the top face vertices (vertices 30-35)
-            face_vertices = basicFaceVertices(.top);
-        },
-    }
+
+    face_vertices = basicFaceVertices(face_type);
     
     // Offset each vertex by the block position
     for (&face_vertices) |*vertex| {
@@ -281,15 +289,8 @@ fn addFaceVertices(vertices: *std.ArrayList(Vertex), x: f32, y: f32, z: f32, fac
 }
 
 // Helper function to get the basic vertices for a face from our template
-fn basicFaceVertices(face_type: FaceType) [6]Vertex {
-    const start_idx: usize = switch (face_type) {
-        .back => 0,
-        .front => 6,
-        .left => 12,
-        .right => 18,
-        .bottom => 24,
-        .top => 30,
-    };
+fn basicFaceVertices(face_type: Direction) [6]Vertex {
+    const start_idx: usize = @intFromEnum(face_type) * 6;
     
     var result: [6]Vertex = undefined;
     for (0..6) |i| {
@@ -297,4 +298,43 @@ fn basicFaceVertices(face_type: FaceType) [6]Vertex {
     }
     
     return result;
+}
+
+test "Chunk - initialization" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    
+    // Create a test chunk
+    const pos = ChunkPos{ .x = 0, .z = 0 };
+    var chunk = Chunk.init(allocator, pos);
+    defer chunk.deinit();
+    
+    // Verify the chunk is initialized with air blocks
+    for (0..CHUNK_SIZE) |x| {
+        for (0..CHUNK_SIZE) |y| {
+            for (0..CHUNK_SIZE) |z| {
+                try std.testing.expectEqual(.AIR, chunk.getBlock(x, y, z).id);
+            }
+        }
+    }
+    
+    // Test setting and getting blocks
+    chunk.setBlock(1, 2, 3, .{ .id = .DIRT });
+    try std.testing.expectEqual(.DIRT, chunk.getBlock(1, 2, 3).id);
+    
+    // Verify the chunk is marked dirty
+    try std.testing.expect(chunk.is_dirty);
+}
+
+test "Chunk - hash function" {
+    // Test that different positions create different hashes
+    const pos1 = ChunkPos{ .x = 1, .z = 2 };
+    const pos2 = ChunkPos{ .x = 2, .z = 1 };
+    
+    try std.testing.expect(pos1.hash() != pos2.hash());
+    
+    // Test that same positions create same hashes
+    const pos3 = ChunkPos{ .x = 1, .z = 2 };
+    try std.testing.expectEqual(pos1.hash(), pos3.hash());
 }

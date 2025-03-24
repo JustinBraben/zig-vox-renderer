@@ -1,3 +1,5 @@
+//! World
+//! Generation, persistance, save management
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const zm = @import("zmath");

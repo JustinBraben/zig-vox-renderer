@@ -32,35 +32,30 @@ pub fn build(b: *std.Build) !void {
     const zglfw = b.dependency("zglfw", .{
         .target = target,
     });
-    exe.root_module.addImport("zglfw", zglfw.module("root"));
-    exe.linkLibrary(zglfw.artifact("glfw"));
-
     const zopengl = b.dependency("zopengl", .{});
-    exe.root_module.addImport("zopengl", zopengl.module("root"));
-
     const zgui = b.dependency("zgui", .{
         .target = target,
         .backend = .glfw_opengl3,
     });
-    exe.root_module.addImport("zgui", zgui.module("root"));
-    exe.linkLibrary(zgui.artifact("imgui"));
-
     const zstbi = b.dependency("zstbi", .{});
-    exe.root_module.addImport("zstbi", zstbi.module("root"));
-    exe.linkLibrary(zstbi.artifact("zstbi"));
-
     const zmath = b.dependency("zmath", .{});
-    exe.root_module.addImport("zmath", zmath.module("root"));
-
     const znoise = b.dependency("znoise", .{});
-    exe.root_module.addImport("znoise", znoise.module("root"));
-    exe.linkLibrary(znoise.artifact("FastNoiseLite"));
-
     const ztracy = b.dependency("ztracy", .{
         .enable_ztracy = options.enable_ztracy,
         .enable_fibers = options.enable_fibers,
         .on_demand = options.on_demand,
     });
+
+    exe.root_module.addImport("zglfw", zglfw.module("root"));
+    exe.linkLibrary(zglfw.artifact("glfw"));
+    exe.root_module.addImport("zopengl", zopengl.module("root"));
+    exe.root_module.addImport("zgui", zgui.module("root"));
+    exe.linkLibrary(zgui.artifact("imgui"));
+    exe.root_module.addImport("zstbi", zstbi.module("root"));
+    exe.linkLibrary(zstbi.artifact("zstbi"));
+    exe.root_module.addImport("zmath", zmath.module("root"));
+    exe.root_module.addImport("znoise", znoise.module("root"));
+    exe.linkLibrary(znoise.artifact("FastNoiseLite"));
     exe.root_module.addImport("ztracy", ztracy.module("root"));
     exe.linkLibrary(ztracy.artifact("tracy"));
 
@@ -83,6 +78,9 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
     });
+    exe_unit_tests.root_module.addImport("zopengl", zopengl.module("root"));
+    exe_unit_tests.root_module.addImport("znoise", znoise.module("root"));
+    exe_unit_tests.linkLibrary(znoise.artifact("FastNoiseLite"));
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_exe_unit_tests.step);
