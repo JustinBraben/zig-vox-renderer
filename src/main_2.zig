@@ -3,11 +3,11 @@ const std = @import("std");
 const Window = @import("engine/window.zig");
 const Input = @import("engine/input.zig");
 const Time = @import("engine/time.zig");
-// const Audio = @import("engine/audio.zig").Audio;
-// const GameState = @import("game/game_state.zig").GameState;
-// const Renderer = @import("renderer/renderer.zig").Renderer;
-// const World = @import("game/world/world.zig").World;
-// const Player = @import("game/player.zig").Player;
+// const Audio = @import("engine/audio.zig");
+// const GameState = @import("game/game_state.zig");
+const Renderer = @import("renderer/renderer.zig");
+// const World = @import("game/world/world.zig");
+// const Player = @import("game/player.zig");
 
 pub fn main() !void {
     var gpa_impl = std.heap.DebugAllocator(.{}){};
@@ -18,7 +18,7 @@ pub fn main() !void {
     var window = try Window.init(.{});
     defer window.deinit();
     
-    var input = try Input.init(gpa, window.window);
+    var input = try Input.init(gpa, &window);
     defer input.deinit();
     
     var time = Time.init();
@@ -26,9 +26,9 @@ pub fn main() !void {
     // var audio = try Audio.init();
     // defer audio.deinit();
     
-    // // Initialize game systems
-    // var renderer = try Renderer.init(&window);
-    // defer renderer.deinit();
+    // Initialize game systems
+    var renderer = try Renderer.init(gpa, &window);
+    defer renderer.deinit();
     
     // var world = try World.init();
     // defer world.deinit();
@@ -49,10 +49,10 @@ pub fn main() !void {
         // try world.update(time.deltaTime);
         // try player.update(time.deltaTime, &input, &world);
         
-        // // Render
-        // renderer.beginFrame();
+        // Render
+        renderer.beginFrame();
         // try renderer.renderWorld(&world, &player);
-        // renderer.endFrame();
+        renderer.endFrame();
         
         window.swapBuffers();
     }

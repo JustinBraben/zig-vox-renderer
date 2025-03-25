@@ -63,10 +63,10 @@ cursor_pos: Pos,
 cursor_delta: Pos,
 last_cursor_pos: Pos,
 
-pub fn init(allocator: Allocator, window: *glfw.Window) !Input {
+pub fn init(allocator: Allocator, window: *Window) !Input {
     // Initialize with default bindings
     var input = Input{
-        .window = window,
+        .window = window.window,
         .action_states = std.AutoHashMap(GameAction, InputState).init(allocator),
         .action_bindings = std.AutoHashMap(GameAction, std.ArrayList(InputBinding)).init(allocator),
         .prev_key_states = @splat(false),
@@ -80,8 +80,8 @@ pub fn init(allocator: Allocator, window: *glfw.Window) !Input {
     try input.setupDefaultBindings();
         
     // Register GLFW callback for cursor position
-    _ = glfw.setCursorPosCallback(window, cursorPosCallback);
-    glfw.setWindowUserPointer(window, &input);
+    _ = glfw.setCursorPosCallback(window.window, cursorPosCallback);
+    glfw.setWindowUserPointer(window.window, &input);
 
     return input;
 }
@@ -208,7 +208,7 @@ pub fn isActionReleased(self: *const Input, action: GameAction) bool {
     return if (self.action_states.get(action)) |state| state == .released else false;
 }
 
-pub fn getCursorDelta(self: *const Input) struct { x: f64, y: f64 } {
+pub fn getCursorDelta(self: *const Input) Pos {
     return self.cursor_delta;
 }
 
