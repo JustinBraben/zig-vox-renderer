@@ -51,6 +51,7 @@ pub fn main() !void {
         
         // Render
         renderer.beginFrame();
+        renderer.renderSkybox();
         // try renderer.renderWorld(&world, &player);
         renderer.endFrame();
         
