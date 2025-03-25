@@ -27,9 +27,6 @@ pub fn init(config: ConfigOptions) !Window {
     const window = try glfw.Window.create(config.width, config.height, "Voxel Renderer", null);
     glfw.makeContextCurrent(window);
 
-    try zopengl.loadCoreProfile(glfw.getProcAddress, @intCast(config.gl_major), @intCast(config.gl_minor));
-    glfw.swapInterval(1);
-
     return .{
         .window = window,
         .config = config,

@@ -7,7 +7,7 @@ const Time = @import("engine/time.zig");
 // const GameState = @import("game/game_state.zig");
 const Renderer = @import("renderer/renderer.zig");
 // const World = @import("game/world/world.zig");
-// const Player = @import("game/player.zig");
+const Player = @import("game/player.zig");
 
 pub fn main() !void {
     var gpa_impl = std.heap.DebugAllocator(.{}){};
@@ -17,9 +17,6 @@ pub fn main() !void {
     // Initialize core systems
     var window = try Window.init(.{});
     defer window.deinit();
-    
-    var input = try Input.init(gpa, &window);
-    defer input.deinit();
     
     var time = Time.init();
     
@@ -33,8 +30,11 @@ pub fn main() !void {
     // var world = try World.init();
     // defer world.deinit();
     
-    // var player = try Player.init(&world);
-    // defer player.deinit();
+    var player = try Player.init();
+    defer player.deinit();
+
+    var input = try Input.init(gpa, &window);
+    defer input.deinit();
     
     // var game_state = GameState.init();
     
@@ -47,11 +47,11 @@ pub fn main() !void {
         // // Game logic update
         // try game_state.update(time.deltaTime);
         // try world.update(time.deltaTime);
-        // try player.update(time.deltaTime, &input, &world);
+        try player.update(time.delta_time, &input);
         
         // Render
         renderer.beginFrame();
-        renderer.renderSkybox();
+        renderer.renderSkybox(&player);
         // try renderer.renderWorld(&world, &player);
         renderer.endFrame();
         

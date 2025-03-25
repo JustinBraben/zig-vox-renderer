@@ -81,6 +81,7 @@ pub fn init(allocator: Allocator, window: *Window) !Input {
         
     // Register GLFW callback for cursor position
     _ = glfw.setCursorPosCallback(window.window, cursorPosCallback);
+    try window.window.setInputMode(.cursor, glfw.Cursor.Mode.disabled);
     glfw.setWindowUserPointer(window.window, &input);
 
     return input;
@@ -124,11 +125,6 @@ pub fn bindAction(self: *Input, action: GameAction, input_binding: InputBinding)
 
 pub fn update(self: *Input) !void {
     glfw.pollEvents();
-
-    // Update mouse delta
-    self.cursor_delta.x = self.cursor_pos.x - self.last_cursor_pos.x;
-    self.cursor_delta.y = self.cursor_pos.y - self.last_cursor_pos.y;
-    self.last_cursor_pos = self.cursor_pos;
 
     // Update all action states
     var it = self.action_bindings.iterator();
@@ -208,13 +204,22 @@ pub fn isActionReleased(self: *const Input, action: GameAction) bool {
     return if (self.action_states.get(action)) |state| state == .released else false;
 }
 
-pub fn getCursorDelta(self: *const Input) Pos {
+pub fn getCursorDelta(self: *Input) Pos {
     return self.cursor_delta;
 }
 
 fn cursorPosCallback(window: *glfw.Window, x: f64, y: f64) callconv(.C) void {
     if (glfw.getWindowUserPointer(window, Input)) |input_ptr| {
+        // std.debug.print("cursorPosCallback called\n", .{});
+        // std.debug.print("former cursor_pos: {any}\n", .{input_ptr.cursor_pos});
         input_ptr.cursor_pos.x = x;
         input_ptr.cursor_pos.y = y;
+
+        // Update mouse delta
+        input_ptr.cursor_delta.x = input_ptr.cursor_pos.x - input_ptr.last_cursor_pos.x;
+        input_ptr.cursor_delta.y = input_ptr.last_cursor_pos.y - input_ptr.cursor_pos.y; // reversed since y-coordinates go from bottom to top
+        input_ptr.last_cursor_pos = input_ptr.cursor_pos;
+
+        // std.debug.print("current cursor_pos: {any}\n", .{input_ptr.cursor_pos});
     }
 }
