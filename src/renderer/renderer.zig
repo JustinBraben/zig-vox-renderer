@@ -22,9 +22,8 @@ pub fn init(allocator: Allocator, window: *Window) !Renderer {
     // -----------------------------
     gl.enable(gl.DEPTH_TEST);
     gl.enable(gl.CULL_FACE);
-	gl.enable(gl.TEXTURE_CUBE_MAP_SEAMLESS);
-    gl.cullFace(gl.BACK);
-	gl.frontFace(gl.CCW);
+    gl.enable(gl.MULTISAMPLE);
+    gl.enable(gl.TEXTURE_CUBE_MAP_SEAMLESS);
 
     zstbi.init(allocator);
 
@@ -66,7 +65,7 @@ pub fn renderSkybox(self: *Renderer, player: *Player) void {
 
     const window_size = self.window.getSize();
     const aspect_ratio: f32 = @as(f32, @floatFromInt(window_size[0])) / @as(f32, @floatFromInt(window_size[1]));
-    const projectionM = zm.perspectiveFovRhGl(std.math.degreesToRadians(player.camera.zoom), aspect_ratio, 0.1, 100.0);
+    const projectionM = zm.perspectiveFovRhGl(std.math.degreesToRadians(player.camera.zoom), aspect_ratio, 0.1, 1000.0);
     zm.storeMat(&projection, projectionM);
     
     self.skybox.shader.setMat4f("view", view);

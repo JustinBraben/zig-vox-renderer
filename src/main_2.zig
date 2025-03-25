@@ -53,7 +53,7 @@ pub fn main() !void {
         renderer.beginFrame();
         renderer.renderSkybox(&player);
         // try renderer.renderWorld(&world, &player);
-        renderer.endFrame();
+        // renderer.endFrame();
         
         window.swapBuffers();
     }

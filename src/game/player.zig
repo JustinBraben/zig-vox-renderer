@@ -27,6 +27,7 @@ pub fn deinit(self: *Player) void {
 pub fn update(self: *Player, delta_time: f32, input: *Input) !void {
     // Movement
     if (input.isActionHeld(.move_forward)) {
+        // std.debug.print("Move forward is held\n", .{});
         self.moveForward(delta_time);
     }
 
@@ -37,9 +38,9 @@ pub fn update(self: *Player, delta_time: f32, input: *Input) !void {
 
 pub fn moveForward(self: *Player, delta_time: f32) void {
     self.camera.processKeyboard(.FORWARD, delta_time);
-    // self.camera.position = zm.loadArr3(.{self.camera.position[0], self.camera.position[1], self.camera.position[2] - (delta_time * MOVEMENT_SPEED)});
 }
 
 pub fn rotateCamera(self: *Player, cursor_delta: Input.Pos) void {
-    self.camera.processMouseMovement(cursor_delta.x, cursor_delta.y, false);
+    // std.debug.print("Cursor delta: x={d}, y={d}\n", .{cursor_delta.x, cursor_delta.y});
+    self.camera.processMouseMovement(cursor_delta.x, cursor_delta.y, true);
 }
