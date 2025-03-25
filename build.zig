@@ -24,7 +24,7 @@ pub fn build(b: *std.Build) !void {
 
     const exe = b.addExecutable(.{
         .name = "zig-vox-renderer",
-        .root_source_file = b.path("src/main.zig"),
+        .root_source_file = b.path("src/main_2.zig"),
         .target = target,
         .optimize = optimize,
     });
