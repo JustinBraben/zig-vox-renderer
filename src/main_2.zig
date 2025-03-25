@@ -10,11 +10,15 @@ const Time = @import("engine/time.zig");
 // const Player = @import("game/player.zig").Player;
 
 pub fn main() !void {
+    var gpa_impl = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa_impl.deinit();
+    const gpa = gpa_impl.allocator();
+
     // Initialize core systems
     var window = try Window.init(.{});
     defer window.deinit();
     
-    var input = try Input.init(&window);
+    var input = try Input.init(gpa, window.window);
     defer input.deinit();
     
     var time = Time.init();
@@ -38,7 +42,7 @@ pub fn main() !void {
     while (!window.shouldClose()) {
         time.updateDeltaTime();
         
-        input.update();
+        try input.update();
         
         // // Game logic update
         // try game_state.update(time.deltaTime);

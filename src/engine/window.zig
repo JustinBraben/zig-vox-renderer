@@ -12,9 +12,6 @@ pub const ConfigOptions = struct {
     gl_minor: i32 = 1,
 };
 
-pub var lastX: f64 = 0.0;
-pub var lastY: f64 = 0.0;
-
 window: *glfw.Window,
 config: ConfigOptions,
 
@@ -30,8 +27,6 @@ pub fn init(config: ConfigOptions) !Window {
     const window = try glfw.Window.create(config.width, config.height, "Voxel Renderer", null);
     glfw.makeContextCurrent(window);
 
-    // Set callbacks
-    _ = window.setCursorPosCallback(mouse_callback);
     try zopengl.loadCoreProfile(glfw.getProcAddress, @intCast(config.gl_major), @intCast(config.gl_minor));
     glfw.swapInterval(1);
 
@@ -52,29 +47,4 @@ pub fn shouldClose(self: *Window) bool {
 
 pub fn swapBuffers(self: *Window) void {
     self.window.swapBuffers();
-}
-
-fn mouse_callback(_: *glfw.Window, xposIn: f64, yposIn: f64) callconv(.C) void {
-    // No camera movement
-    // if (toggle_cursor) return;
-
-    const xpos: f32 = @floatCast(@trunc(xposIn));
-    const ypos: f32 = @floatCast(@trunc(yposIn));
-
-    // if (first_mouse)
-    // {
-    //     lastX = xpos;
-    //     lastY = ypos;
-    //     first_mouse = false;
-    // }
-
-    const xoffset = xpos - lastX;
-    const yoffset = lastY - ypos; // reversed since y-coordinates go from bottom to top
-    lastX = xpos;
-    lastY = ypos;
-
-    // TODO: Should set a bool that camera should processMouseMovement
-    _ = xoffset;
-    _ = yoffset;
-    // camera.processMouseMovement(xoffset, yoffset, true);
 }
