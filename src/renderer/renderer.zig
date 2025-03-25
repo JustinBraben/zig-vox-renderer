@@ -4,12 +4,13 @@ const glfw = @import("zglfw");
 const zopengl = @import("zopengl");
 const gl = zopengl.bindings;
 const Window = @import("../engine/window.zig");
-const Shader = @import("shader.zig");
+const Skybox = @import("skybox.zig");
+const zstbi = @import("zstbi");
 
 const Renderer = @This();
 
 window: *glfw.Window,
-skybox_shader: Shader,
+skybox: Skybox,
 
 pub fn init(allocator: Allocator, window: *Window) !Renderer {
 
@@ -18,18 +19,21 @@ pub fn init(allocator: Allocator, window: *Window) !Renderer {
     gl.enable(gl.DEPTH_TEST);
     gl.enable(gl.MULTISAMPLE);
     gl.enable(gl.CULL_FACE);
+	gl.enable(gl.TEXTURE_CUBE_MAP_SEAMLESS);
     gl.cullFace(gl.BACK);
 	gl.frontFace(gl.CCW);
-	gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+    zstbi.init(allocator);
 
     return .{
         .window = window.window,
-        .skybox_shader = try Shader.create(allocator, "assets/shaders/skybox_vert.glsl", "assets/shaders/skybox_frag.glsl"),
+        .skybox = try Skybox.init(allocator),
     };
 }
 
 pub fn deinit(self: *Renderer) void {
-    _ = &self;
+    self.skybox.deinit();
+    zstbi.deinit();
 }
 
 pub fn beginFrame(self: *Renderer) void {
