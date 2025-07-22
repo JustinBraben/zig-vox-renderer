@@ -13,3 +13,5 @@
 zig-out/
 
 libs/
+
+imgui.ini
