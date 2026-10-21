@@ -58,8 +58,8 @@ pub fn build(b: *std.Build) !void {
             .{ .name = "sdl_vk_backend", .module = backend_mod },
         },
     });
-    addShader(b, exe_mod, "triangle_vert", "src/shaders/triangle.vert");
-    addShader(b, exe_mod, "triangle_frag", "src/shaders/triangle.frag");
+    addShader(b, exe_mod, "voxel_vert", "src/shaders/voxel.vert");
+    addShader(b, exe_mod, "voxel_frag", "src/shaders/voxel.frag");
 
     const exe = b.addExecutable(.{
         .name = "zig_vox_renderer",
@@ -73,6 +73,16 @@ pub fn build(b: *std.Build) !void {
 
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
+
+    const tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/tests.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const test_step = b.step("test", "Run unit tests");
+    test_step.dependOn(&b.addRunArtifact(tests).step);
 }
 
 /// Compiles a GLSL shader to SPIR-V with glslc (from the Vulkan SDK) and makes it

@@ -7,25 +7,26 @@ const SdlVkBackend = @import("sdl_vk_backend");
 const VkRenderer = @import("dvui_vulkan_renderer");
 const VulkanContext = @import("gfx/vulkan_context.zig");
 const Swapchain = @import("gfx/swapchain.zig");
-const TrianglePipeline = @import("gfx/triangle_pipeline.zig");
+const DepthBuffer = @import("gfx/depth_buffer.zig");
+const MeshArena = @import("gfx/mesh_arena.zig");
+const VoxelPipeline = @import("gfx/voxel_pipeline.zig");
+const World = @import("world/world.zig");
+const Camera = @import("camera.zig");
+const Settings = @import("settings.zig").Settings;
+const debug_ui = @import("ui/debug_ui.zig");
+const math = @import("math.zig");
 const vk = VulkanContext.vk;
 
 const log = std.log.scoped(.app);
 
 const frames_in_flight = 2;
+/// 16M vertices = 128 MiB of chunk meshes
+const mesh_arena_vertices = 16 * 1024 * 1024;
 
 const Frame = struct {
     cmd: vk.CommandBuffer,
     image_available: vk.Semaphore,
     in_flight: vk.Fence,
-};
-
-/// State tweaked from the UI
-const Settings = struct {
-    clear_color: [3]f32 = .{ 0.05, 0.05, 0.08 },
-    tint: [3]f32 = .{ 1, 1, 1 },
-    vsync: bool = true,
-    show_demo: bool = false,
 };
 
 pub fn main(init: std.process.Init) !void {
@@ -43,8 +44,8 @@ pub fn main(init: std.process.Init) !void {
 
     const window = c.SDL_CreateWindow(
         "zig-vox-renderer",
-        1280,
-        720,
+        1600,
+        900,
         c.SDL_WINDOW_VULKAN | c.SDL_WINDOW_RESIZABLE | c.SDL_WINDOW_HIGH_PIXEL_DENSITY,
     ) orelse {
         log.err("SDL_CreateWindow failed: {s}", .{c.SDL_GetError()});
@@ -59,11 +60,22 @@ pub fn main(init: std.process.Init) !void {
     defer ctx.deinit();
     const device = ctx.device;
 
+    const memory = VkRenderer.VkMemory.init(
+        ctx.memory_properties,
+        ctx.properties.limits.non_coherent_atom_size,
+    ) orelse return error.NoCompatibleMemoryType;
+
     var swapchain = try Swapchain.init(&ctx, windowExtent(window), settings.vsync);
     defer swapchain.deinit();
 
-    var triangle = try TrianglePipeline.init(device, swapchain.surface_format.format);
-    defer triangle.deinit();
+    var depth = try DepthBuffer.init(device, memory, swapchain.extent);
+    defer depth.deinit();
+
+    var voxel = try VoxelPipeline.init(device, memory, swapchain.surface_format.format, DepthBuffer.format, frames_in_flight);
+    defer voxel.deinit();
+
+    var arena = try MeshArena.init(gpa, device, memory, mesh_arena_vertices, frames_in_flight);
+    defer arena.deinit();
 
     const command_pool = try device.createCommandPool(&.{
         .flags = .{ .reset_command_buffer_bit = true },
@@ -86,12 +98,7 @@ pub fn main(init: std.process.Init) !void {
         device.destroyFence(frame.in_flight, null);
     };
 
-    // dvui setup
-    const memory = VkRenderer.VkMemory.init(
-        ctx.memory_properties,
-        ctx.properties.limits.non_coherent_atom_size,
-    ) orelse return error.NoCompatibleMemoryType;
-
+    // dvui setup; it draws in the same rendering scope as the world, so it must know the depth format
     var renderer = try VkRenderer.init(gpa, .{
         .dev = device,
         .gpu_allocator = .{ .builtin = memory },
@@ -99,7 +106,7 @@ pub fn main(init: std.process.Init) !void {
             .view_mask = 0,
             .color_attachment_count = 1,
             .p_color_attachment_formats = &.{swapchain.surface_format.format},
-            .depth_attachment_format = .undefined,
+            .depth_attachment_format = DepthBuffer.format,
             .stencil_attachment_format = .undefined,
         } } },
         .graphics_queue_family_index = ctx.graphics_queue_index,
@@ -113,21 +120,40 @@ pub fn main(init: std.process.Init) !void {
     var win = try dvui.Window.init(@src(), gpa, backend.backend(), .{});
     defer win.deinit();
 
+    var world = try World.init(gpa, settings.seed);
+    defer world.deinit();
+
+    var camera: Camera = .{};
+    // start above the terrain
+    camera.position[1] = @floatFromInt(world.terrain.height(0, 0) + 40);
+
     // wait for the GPU before any of the deferred destruction above runs
     defer device.deviceWaitIdle() catch {};
 
-    var frame_index: usize = 0;
+    var frame_counter: u64 = 0;
     var needs_recreate = false;
+    var looking = false;
     var last_frame_ns = backend.nanoTime();
     var frame_ms: f32 = 0;
 
     main_loop: while (true) {
         var event: c.SDL_Event = undefined;
         while (c.SDL_PollEvent(&event)) {
-            _ = try backend.addEvent(&win, event);
+            const over_ui = try backend.addEvent(&win, event);
             switch (event.type) {
                 c.SDL_EVENT_QUIT => break :main_loop,
                 c.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED => needs_recreate = true,
+                c.SDL_EVENT_MOUSE_BUTTON_DOWN => if (event.button.button == c.SDL_BUTTON_RIGHT and !over_ui) {
+                    looking = true;
+                    _ = c.SDL_SetWindowRelativeMouseMode(window, true);
+                },
+                c.SDL_EVENT_MOUSE_BUTTON_UP => if (event.button.button == c.SDL_BUTTON_RIGHT and looking) {
+                    looking = false;
+                    _ = c.SDL_SetWindowRelativeMouseMode(window, false);
+                },
+                c.SDL_EVENT_MOUSE_MOTION => if (looking) {
+                    camera.look(event.motion.xrel, event.motion.yrel, settings.mouse_sensitivity);
+                },
                 else => {},
             }
         }
@@ -150,11 +176,15 @@ pub fn main(init: std.process.Init) !void {
                 },
                 else => return err,
             };
+            // swapchain.recreate waited for the device to go idle
+            try depth.recreate(swapchain.extent);
             needs_recreate = false;
         }
 
+        const frame_index: usize = @intCast(frame_counter % frames_in_flight);
         const frame = &frames[frame_index];
         _ = try device.waitForFences(&.{frame.in_flight}, .true, std.math.maxInt(u64));
+        try arena.retire(frame_counter);
 
         const acquired = device.acquireNextImageKHR(swapchain.handle, std.math.maxInt(u64), frame.image_available, .null_handle) catch |err| switch (err) {
             error.OutOfDateKHR => {
@@ -174,14 +204,30 @@ pub fn main(init: std.process.Init) !void {
         frame_ms = if (frame_ms == 0) dt_ms else frame_ms * 0.95 + dt_ms * 0.05;
         last_frame_ns = now_ns;
 
+        // camera + world
+        if (looking) moveCamera(&camera, &settings, @min(dt_ms, 100) / 1000);
+        const world_config: World.Config = .{
+            .render_distance = settings.render_distance,
+            .min_y = settings.min_chunk_y,
+            .max_y = settings.max_chunk_y,
+            .gen_budget = @intCast(settings.gen_budget),
+            .mesh_budget = @intCast(settings.mesh_budget),
+        };
+        try world.update(&arena, camera.position, world_config, frame_counter);
+
+        const aspect = @as(f32, @floatFromInt(swapchain.extent.width)) / @as(f32, @floatFromInt(swapchain.extent.height));
+        const view_proj = Camera.projection(settings.fov_deg, aspect).mul(camera.view());
+        voxel.setScene(frame_index, sceneUniforms(&settings, view_proj));
+
         // record
         const cmd = frame.cmd;
         try device.resetCommandBuffer(cmd, .{});
         try device.beginCommandBuffer(cmd, &.{ .flags = .{ .one_time_submit_bit = true } });
 
         transitionImage(device, cmd, swapchain.images[image_index], .undefined, .color_attachment_optimal);
+        depth.transition(cmd);
 
-        const cc = settings.clear_color;
+        const sky = settings.sky_color;
         device.cmdBeginRendering(cmd, &.{
             .render_area = .{ .offset = .{ .x = 0, .y = 0 }, .extent = swapchain.extent },
             .layer_count = 1,
@@ -194,16 +240,34 @@ pub fn main(init: std.process.Init) !void {
                 .resolve_image_layout = .undefined,
                 .load_op = .clear,
                 .store_op = .store,
-                .clear_value = .{ .color = .{ .float_32 = .{ cc[0], cc[1], cc[2], 1 } } },
+                .clear_value = .{ .color = .{ .float_32 = .{ sky[0], sky[1], sky[2], 1 } } },
             }},
+            .p_depth_attachment = &.{
+                .image_view = depth.view,
+                .image_layout = .depth_attachment_optimal,
+                .resolve_mode = .{},
+                .resolve_image_layout = .undefined,
+                .load_op = .clear,
+                .store_op = .dont_care,
+                // reverse-Z: 0 is infinitely far away
+                .clear_value = .{ .depth_stencil = .{ .depth = 0, .stencil = 0 } },
+            },
         });
 
-        triangle.draw(cmd, swapchain.extent, .{ .tint = .{ settings.tint[0], settings.tint[1], settings.tint[2], 1 } });
+        voxel.bind(cmd, frame_index, swapchain.extent, &arena);
+        const frustum: ?math.Frustum = if (settings.frustum_culling) .fromViewProj(view_proj) else null;
+        world.draw(cmd, &voxel, camera.position, frustum, world_config);
 
         // dvui draws on top, inside the same rendering scope
         try renderer.beginFrame(cmd, swapchain.extent);
         try win.begin(backend.nanoTime());
-        drawUi(&settings, frame_ms);
+        const actions = debug_ui.draw(&settings, .{
+            .frame_ms = frame_ms,
+            .camera = &camera,
+            .world = world.stats,
+            .arena_used = arena.used,
+            .arena_capacity = arena.capacity,
+        });
         _ = try win.end(.{});
         const recorded = try renderer.endFrame();
 
@@ -253,41 +317,48 @@ pub fn main(init: std.process.Init) !void {
         };
         if (present_result != .success) needs_recreate = true;
 
-        frame_index = (frame_index + 1) % frames_in_flight;
+        if (actions.regenerate) try world.regenerate(&arena, settings.seed, frame_counter);
+
+        frame_counter += 1;
     }
 }
 
-fn drawUi(settings: *Settings, frame_ms: f32) void {
-    var float = dvui.floatingWindow(@src(), .{}, .{ .min_size_content = .{ .w = 260 } });
-    defer float.deinit();
-    float.dragAreaSet(dvui.windowHeader("Renderer", "", null));
-
-    var box = dvui.box(@src(), .{}, .{ .expand = .both, .padding = .all(6) });
-    defer box.deinit();
-
-    const fps = if (frame_ms > 0) 1000.0 / frame_ms else 0;
-    dvui.label(@src(), "{d:.2} ms ({d:.0} fps)", .{ frame_ms, fps }, .{});
-
-    _ = dvui.checkbox(@src(), &settings.vsync, "VSync", .{});
-    _ = dvui.checkbox(@src(), &settings.show_demo, "dvui demo window", .{});
-
-    dvui.label(@src(), "Clear color", .{}, .{ .font = .theme(.heading) });
-    colorSliders(@src(), &settings.clear_color);
-
-    dvui.label(@src(), "Triangle tint", .{}, .{ .font = .theme(.heading) });
-    colorSliders(@src(), &settings.tint);
-
-    dvui.Examples.show_demo_window = settings.show_demo;
-    dvui.Examples.demo(.lite);
-    settings.show_demo = dvui.Examples.show_demo_window;
+fn moveCamera(camera: *Camera, settings: *const Settings, dt: f32) void {
+    const keys = c.SDL_GetKeyboardState(null);
+    var dir: math.Vec3 = .{ 0, 0, 0 };
+    if (keys[c.SDL_SCANCODE_D]) dir[0] += 1;
+    if (keys[c.SDL_SCANCODE_A]) dir[0] -= 1;
+    if (keys[c.SDL_SCANCODE_SPACE]) dir[1] += 1;
+    if (keys[c.SDL_SCANCODE_LCTRL]) dir[1] -= 1;
+    if (keys[c.SDL_SCANCODE_W]) dir[2] += 1;
+    if (keys[c.SDL_SCANCODE_S]) dir[2] -= 1;
+    if (math.length(dir) == 0) return;
+    const speed = settings.move_speed * @as(f32, if (keys[c.SDL_SCANCODE_LSHIFT]) 4 else 1);
+    camera.move(math.scale(math.normalize(dir), speed * dt));
 }
 
-fn colorSliders(src: std.builtin.SourceLocation, color: *[3]f32) void {
-    var vbox = dvui.box(src, .{}, .{ .expand = .horizontal });
-    defer vbox.deinit();
-    _ = dvui.sliderEntry(@src(), "R: {d:0.2}", .{ .value = &color[0], .min = 0, .max = 1 }, .{ .expand = .horizontal });
-    _ = dvui.sliderEntry(@src(), "G: {d:0.2}", .{ .value = &color[1], .min = 0, .max = 1 }, .{ .expand = .horizontal });
-    _ = dvui.sliderEntry(@src(), "B: {d:0.2}", .{ .value = &color[2], .min = 0, .max = 1 }, .{ .expand = .horizontal });
+fn sceneUniforms(settings: *const Settings, view_proj: math.Mat4) VoxelPipeline.Scene {
+    const sun_dir = math.fromDirection(settings.sun_azimuth, settings.sun_elevation);
+    const fog = settings.fogRange() orelse .{ 0, 0 };
+    return .{
+        .view_proj = view_proj,
+        .sun_dir = .{ sun_dir[0], sun_dir[1], sun_dir[2], 0 },
+        .sun_color = linearColor(settings.sun_color, settings.sun_intensity),
+        .sky_color = linearColor(settings.sky_color, settings.ambient_intensity),
+        .ground_color = linearColor(settings.ground_color, settings.ambient_intensity),
+        .fog_color = linearColor(settings.sky_color, 1),
+        .params = .{ fog[0], fog[1], if (settings.ao_enabled) settings.ao_strength else 0, 0 },
+    };
+}
+
+/// sRGB UI color to linear, scaled.
+fn linearColor(srgb: [3]f32, intensity: f32) [4]f32 {
+    var out: [4]f32 = .{ 0, 0, 0, 1 };
+    for (srgb, 0..) |v, i| {
+        const linear = if (v <= 0.04045) v / 12.92 else std.math.pow(f32, (v + 0.055) / 1.055, 2.4);
+        out[i] = linear * intensity;
+    }
+    return out;
 }
 
 fn windowExtent(window: *c.SDL_Window) vk.Extent2D {
