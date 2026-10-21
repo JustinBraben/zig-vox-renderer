@@ -53,6 +53,40 @@ const faces = [6]Face{
 
 const corner_uv = [4][2]i32{ .{ 0, 0 }, .{ 1, 0 }, .{ 1, 1 }, .{ 0, 1 } };
 
+/// Per-face lookups for the mesher, precomputed so the inner loop is just
+/// index arithmetic. All offsets are relative to the padded index of the
+/// block's (-1, -1, -1) neighbor, which keeps them non-negative.
+const FaceTable = struct {
+    /// the block the face looks into
+    front: usize,
+    /// per corner: side1, side2 and corner blocks for AO
+    ao: [4][3]usize,
+    /// per corner: packed position delta + face index, added to the block's packed position
+    vertex: [4]u32,
+};
+
+const face_tables = blk: {
+    var tables: [6]FaceTable = undefined;
+    for (faces, &tables, 0..) |face, *t, face_index| {
+        const front = face.normal;
+        t.front = paddedOffset(front);
+        for (corner_uv, 0..) |uv, ci| {
+            const du = scale(face.u, uv[0] * 2 - 1);
+            const dv = scale(face.v, uv[1] * 2 - 1);
+            t.ao[ci] = .{ paddedOffset(add(front, du)), paddedOffset(add(front, dv)), paddedOffset(add(add(front, du), dv)) };
+            // face plane sits at the far side of the block for positive normals
+            const pos = add(add(.{ @max(face.normal[0], 0), @max(face.normal[1], 0), @max(face.normal[2], 0) }, scale(face.u, uv[0])), scale(face.v, uv[1]));
+            t.vertex[ci] = Vertex.init(pos[0], pos[1], pos[2], face_index, 0, 0).data;
+        }
+    }
+    break :blk tables;
+};
+
+/// Padded-index offset of `d` (each component -1..1) from the block's (-1, -1, -1) neighbor.
+fn paddedOffset(d: [3]i32) usize {
+    return paddedIndex(d[0] + 1, d[1] + 1, d[2] + 1);
+}
+
 /// Appends the mesh of the padded volume's inner chunk to `out`.
 pub fn meshChunk(allocator: Allocator, padded: *const Padded, out: *std.ArrayList(Vertex)) !void {
     for (1..chunk.size + 1) |y| {
@@ -61,38 +95,24 @@ pub fn meshChunk(allocator: Allocator, padded: *const Padded, out: *std.ArrayLis
                 const block = padded[paddedIndex(x, y, z)];
                 if (!block.isOpaque()) continue;
                 const color = block.color();
-                const p = [3]i32{ @intCast(x), @intCast(y), @intCast(z) };
+                const origin = paddedIndex(x - 1, y - 1, z - 1);
+                const packed_pos = Vertex.init(@intCast(x - 1), @intCast(y - 1), @intCast(z - 1), 0, 0, 0).data;
+                try out.ensureUnusedCapacity(allocator, 6 * 4);
 
-                for (faces, 0..) |face, face_index| {
-                    // the layer of blocks the face looks into
-                    const front = add(p, face.normal);
-                    if (solid(padded, front)) continue;
+                inline for (face_tables) |t| {
+                    if (!padded[origin + t.front].isOpaque()) {
+                        var ao: [4]u32 = undefined;
+                        inline for (&ao, t.ao) |*corner_ao, n| {
+                            corner_ao.* = vertexAo(padded[origin + n[0]].isOpaque(), padded[origin + n[1]].isOpaque(), padded[origin + n[2]].isOpaque());
+                        }
 
-                    var ao: [4]u32 = undefined;
-                    for (corner_uv, &ao) |uv, *corner_ao| {
-                        const du = scale(face.u, uv[0] * 2 - 1);
-                        const dv = scale(face.v, uv[1] * 2 - 1);
-                        const side1 = solid(padded, add(front, du));
-                        const side2 = solid(padded, add(front, dv));
-                        const corner = solid(padded, add(add(front, du), dv));
-                        corner_ao.* = vertexAo(side1, side2, corner);
-                    }
-
-                    // flip the quad diagonal to avoid anisotropic AO interpolation
-                    const rotate: usize = if (ao[0] + ao[2] > ao[1] + ao[3]) 1 else 0;
-
-                    // face plane sits at the far side of the block for positive normals
-                    const base = [3]i32{
-                        p[0] - 1 + @max(face.normal[0], 0),
-                        p[1] - 1 + @max(face.normal[1], 0),
-                        p[2] - 1 + @max(face.normal[2], 0),
-                    };
-                    const quad = try out.addManyAsArray(allocator, 4);
-                    for (quad, 0..) |*vertex, i| {
-                        const ci = (i + rotate) % 4;
-                        const uv = corner_uv[ci];
-                        const pos = add(add(base, scale(face.u, uv[0])), scale(face.v, uv[1]));
-                        vertex.* = .init(@intCast(pos[0]), @intCast(pos[1]), @intCast(pos[2]), @intCast(face_index), ao[ci], color);
+                        // flip the quad diagonal to avoid anisotropic AO interpolation
+                        const rotate: usize = if (ao[0] + ao[2] > ao[1] + ao[3]) 1 else 0;
+                        const quad = out.addManyAsArrayAssumeCapacity(4);
+                        for (quad, 0..) |*vertex, i| {
+                            const ci = (i + rotate) % 4;
+                            vertex.* = .{ .data = (packed_pos + t.vertex[ci]) | (ao[ci] << 21), .color = color };
+                        }
                     }
                 }
             }
@@ -104,10 +124,6 @@ pub fn meshChunk(allocator: Allocator, padded: *const Padded, out: *std.ArrayLis
 fn vertexAo(side1: bool, side2: bool, corner: bool) u32 {
     if (side1 and side2) return 0;
     return 3 - @as(u32, @intFromBool(side1)) - @intFromBool(side2) - @intFromBool(corner);
-}
-
-fn solid(padded: *const Padded, p: [3]i32) bool {
-    return padded[paddedIndex(@intCast(p[0]), @intCast(p[1]), @intCast(p[2]))].isOpaque();
 }
 
 fn add(a: [3]i32, b: [3]i32) [3]i32 {
@@ -200,4 +216,62 @@ test "ambient occlusion next to a wall" {
         break;
     }
     try testing.expect(found);
+}
+
+/// The original straightforward mesher, kept to check the table-driven one against.
+fn meshChunkReference(allocator: Allocator, padded: *const Padded, out: *std.ArrayList(Vertex)) !void {
+    const Ref = struct {
+        fn solid(v: *const Padded, p: [3]i32) bool {
+            return v[paddedIndex(@intCast(p[0]), @intCast(p[1]), @intCast(p[2]))].isOpaque();
+        }
+    };
+    for (1..chunk.size + 1) |y| {
+        for (1..chunk.size + 1) |z| {
+            for (1..chunk.size + 1) |x| {
+                const block = padded[paddedIndex(x, y, z)];
+                if (!block.isOpaque()) continue;
+                const p = [3]i32{ @intCast(x), @intCast(y), @intCast(z) };
+                for (faces, 0..) |face, face_index| {
+                    const front = add(p, face.normal);
+                    if (Ref.solid(padded, front)) continue;
+                    var ao: [4]u32 = undefined;
+                    for (corner_uv, &ao) |uv, *corner_ao| {
+                        const du = scale(face.u, uv[0] * 2 - 1);
+                        const dv = scale(face.v, uv[1] * 2 - 1);
+                        corner_ao.* = vertexAo(Ref.solid(padded, add(front, du)), Ref.solid(padded, add(front, dv)), Ref.solid(padded, add(add(front, du), dv)));
+                    }
+                    const rotate: usize = if (ao[0] + ao[2] > ao[1] + ao[3]) 1 else 0;
+                    const base = [3]i32{
+                        p[0] - 1 + @max(face.normal[0], 0),
+                        p[1] - 1 + @max(face.normal[1], 0),
+                        p[2] - 1 + @max(face.normal[2], 0),
+                    };
+                    for (0..4) |i| {
+                        const ci = (i + rotate) % 4;
+                        const uv = corner_uv[ci];
+                        const pos = add(add(base, scale(face.u, uv[0])), scale(face.v, uv[1]));
+                        try out.append(allocator, .init(@intCast(pos[0]), @intCast(pos[1]), @intCast(pos[2]), @intCast(face_index), ao[ci], block.color()));
+                    }
+                }
+            }
+        }
+    }
+}
+
+test "table-driven mesher matches the reference on a random volume" {
+    const padded = try emptyVolume();
+    defer testing.allocator.destroy(padded);
+    var prng: std.Random.DefaultPrng = .init(42);
+    const random = prng.random();
+    for (padded) |*b| b.* = if (random.uintLessThan(u8, 100) < 45) .stone else if (random.boolean()) .grass else .air;
+
+    var expected: std.ArrayList(Vertex) = .empty;
+    defer expected.deinit(testing.allocator);
+    try meshChunkReference(testing.allocator, padded, &expected);
+    var actual: std.ArrayList(Vertex) = .empty;
+    defer actual.deinit(testing.allocator);
+    try meshChunk(testing.allocator, padded, &actual);
+
+    try testing.expect(expected.items.len > 1000);
+    try testing.expectEqualSlices(Vertex, expected.items, actual.items);
 }

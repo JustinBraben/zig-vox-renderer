@@ -49,6 +49,8 @@ pub fn draw(settings: *Settings, stats: Stats) Actions {
         dvui.label(@src(), "chunks: {d} loaded, {d} meshed, {d} drawn", .{ w.loaded, w.meshed, w.drawn }, .{});
         dvui.label(@src(), "pending: {d}  (+{d} gen, +{d} mesh)", .{ w.pending, w.generated_this_frame, w.meshed_this_frame }, .{});
         dvui.label(@src(), "drawn vertices: {d:.2} M", .{@as(f64, @floatFromInt(w.drawn_vertices)) / 1e6}, .{});
+        dvui.label(@src(), "cpu: update {d:.2} ms (gen {d:.2}, mesh {d:.2}), draw {d:.2} ms", .{ w.update_ms, w.gen_ms, w.mesh_ms, w.draw_ms }, .{});
+        dvui.label(@src(), "avg: gen {d:.0} us/chunk, mesh {d:.0} us/chunk", .{ perChunkUs(w.gen_total_ns, w.gen_total), perChunkUs(w.mesh_total_ns, w.mesh_total) }, .{});
         const used_mib = @as(f64, @floatFromInt(stats.arena_used)) * 8 / (1 << 20);
         const cap_mib = @as(f64, @floatFromInt(stats.arena_capacity)) * 8 / (1 << 20);
         dvui.label(@src(), "mesh arena: {d:.1} / {d:.0} MiB{s}", .{ used_mib, cap_mib, if (w.arena_full) " (FULL)" else "" }, .{});
@@ -135,6 +137,11 @@ pub fn draw(settings: *Settings, stats: Stats) Actions {
     settings.show_demo = dvui.Examples.show_demo_window;
 
     return actions;
+}
+
+pub fn perChunkUs(total_ns: u64, count: u64) f64 {
+    if (count == 0) return 0;
+    return @as(f64, @floatFromInt(total_ns)) / @as(f64, @floatFromInt(count)) / std.time.ns_per_us;
 }
 
 fn heading(src: std.builtin.SourceLocation, text: []const u8) void {

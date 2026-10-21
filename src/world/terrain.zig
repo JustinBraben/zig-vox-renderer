@@ -25,35 +25,60 @@ pub fn height(self: Self, x: i32, z: i32) i32 {
     return @intFromFloat(@floor(8 + mountains + detail * 24));
 }
 
-/// Fills `blocks` for the chunk at `pos`. Returns false (and leaves `blocks`
-/// untouched) when the whole chunk is air.
-pub fn generate(self: Self, pos: chunk.ChunkPos, blocks: *chunk.Blocks) bool {
-    const y0 = pos.y * chunk.size;
-    var heights: [chunk.size][chunk.size]i32 = undefined;
-    var max_height: i32 = std.math.minInt(i32);
+/// Surface heights of one chunk column; shared by every chunk stacked in it.
+pub const Heightmap = struct {
+    heights: [chunk.size][chunk.size]i32,
+    min: i32,
+    max: i32,
+};
+
+pub fn heightmap(self: Self, column_x: i32, column_z: i32, map: *Heightmap) void {
+    map.min = std.math.maxInt(i32);
+    map.max = std.math.minInt(i32);
     for (0..chunk.size) |z| {
         for (0..chunk.size) |x| {
-            const h = self.height(pos.x * chunk.size + @as(i32, @intCast(x)), pos.z * chunk.size + @as(i32, @intCast(z)));
-            heights[z][x] = h;
-            max_height = @max(max_height, h);
+            const h = self.height(column_x * chunk.size + @as(i32, @intCast(x)), column_z * chunk.size + @as(i32, @intCast(z)));
+            map.heights[z][x] = h;
+            map.min = @min(map.min, h);
+            map.max = @max(map.max, h);
         }
     }
-    if (max_height < y0) return false;
+}
 
+pub const Content = union(enum) {
+    /// every block is this one
+    uniform: BlockId,
+    /// needs `fill`
+    mixed,
+};
+
+/// What the chunk at height `chunk_y` of `map`'s column contains, without generating it.
+pub fn classify(chunk_y: i32, map: *const Heightmap) Content {
+    const y0 = chunk_y * chunk.size;
+    if (y0 > map.max) return .{ .uniform = .air };
+    // blocks at least `stone_depth` below the surface are always stone
+    if (y0 + chunk.size - 1 <= map.min - stone_depth) return .{ .uniform = .stone };
+    return .mixed;
+}
+
+/// Fills `blocks` for the chunk at height `chunk_y` of `map`'s column.
+pub fn fill(chunk_y: i32, map: *const Heightmap, blocks: *chunk.Blocks) void {
+    const y0 = chunk_y * chunk.size;
     for (0..chunk.size) |y| {
         const wy = y0 + @as(i32, @intCast(y));
         for (0..chunk.size) |z| {
             for (0..chunk.size) |x| {
-                blocks[chunk.index(x, y, z)] = blockAt(wy, heights[z][x]);
+                blocks[chunk.index(x, y, z)] = blockAt(wy, map.heights[z][x]);
             }
         }
     }
-    return true;
 }
 
 pub fn block(self: Self, x: i32, y: i32, z: i32) BlockId {
     return blockAt(y, self.height(x, z));
 }
+
+const stone_depth = 6;
 
 fn blockAt(y: i32, surface: i32) BlockId {
     if (y > surface) return .air;
@@ -65,7 +90,7 @@ fn blockAt(y: i32, surface: i32) BlockId {
         return .grass;
     }
     if (y > surface - 4) return if (beach) .sand else .dirt;
-    if (y > surface - 6 and beach) return .gravel;
+    if (y > surface - stone_depth and beach) return .gravel;
     return .stone;
 }
 
@@ -138,7 +163,10 @@ test "generated chunks match the per-block function across borders" {
     defer std.testing.allocator.destroy(blocks);
 
     const pos: chunk.ChunkPos = .{ .x = -1, .y = 0, .z = 2 };
-    try std.testing.expect(terrain.generate(pos, blocks));
+    var map: Heightmap = undefined;
+    terrain.heightmap(pos.x, pos.z, &map);
+    try std.testing.expectEqual(Content.mixed, classify(pos.y, &map));
+    fill(pos.y, &map, blocks);
     for ([_]usize{ 0, 31 }) |x| {
         for (0..chunk.size) |y| {
             for ([_]usize{ 0, 31 }) |z| {
@@ -149,5 +177,27 @@ test "generated chunks match the per-block function across borders" {
     }
 
     // far above the terrain is empty
-    try std.testing.expect(!terrain.generate(.{ .x = 0, .y = 10, .z = 0 }, blocks));
+    try std.testing.expectEqual(Content{ .uniform = .air }, classify(10, &map));
+}
+
+test "uniform chunks really are uniform" {
+    const terrain: Self = .{ .seed = 7 };
+    const blocks = try std.testing.allocator.create(chunk.Blocks);
+    defer std.testing.allocator.destroy(blocks);
+
+    var found_stone = false;
+    var cx: i32 = -6;
+    while (cx <= 6) : (cx += 1) {
+        var map: Heightmap = undefined;
+        terrain.heightmap(cx, cx * 2, &map);
+        var cy: i32 = -2;
+        while (cy <= 4) : (cy += 1) {
+            const content = classify(cy, &map);
+            if (content != .uniform) continue;
+            if (content.uniform == .stone) found_stone = true;
+            fill(cy, &map, blocks);
+            for (blocks) |b| try std.testing.expectEqual(content.uniform, b);
+        }
+    }
+    try std.testing.expect(found_stone);
 }

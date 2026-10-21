@@ -54,6 +54,15 @@ pub fn main(init: std.process.Init) !void {
     defer c.SDL_DestroyWindow(window);
 
     var settings: Settings = .{};
+    var bench: ?Bench = null;
+    for (try init.minimal.args.toSlice(init.arena.allocator())) |arg| {
+        if (std.mem.startsWith(u8, arg, "--bench")) {
+            bench = .{};
+            settings.vsync = false;
+            settings.render_distance = 12;
+            if (std.mem.startsWith(u8, arg, "--bench=")) settings.render_distance = try std.fmt.parseInt(i32, arg["--bench=".len..], 10);
+        }
+    }
 
     // Vulkan setup
     var ctx = try VulkanContext.init(gpa, window);
@@ -120,7 +129,7 @@ pub fn main(init: std.process.Init) !void {
     var win = try dvui.Window.init(@src(), gpa, backend.backend(), .{});
     defer win.deinit();
 
-    var world = try World.init(gpa, settings.seed);
+    var world = try World.init(gpa, init.io, settings.seed);
     defer world.deinit();
 
     var camera: Camera = .{};
@@ -318,10 +327,57 @@ pub fn main(init: std.process.Init) !void {
         if (present_result != .success) needs_recreate = true;
 
         if (actions.regenerate) try world.regenerate(&arena, settings.seed, frame_counter);
+        if (bench) |*b| if (b.frame(&world.stats, dt_ms, now_ns)) break :main_loop;
 
         frame_counter += 1;
     }
 }
+
+/// `--bench[=render_distance]`: loads the world around a fixed camera with vsync off,
+/// then measures steady-state frames, prints the results and exits (printed rather
+/// than logged so it also shows in release builds).
+const Bench = struct {
+    const steady_frames = 600;
+
+    load_start_ns: ?i128 = null,
+    load_ms: f64 = 0,
+    frames: u32 = 0,
+    frame_ms: f64 = 0,
+    update_ms: f64 = 0,
+    draw_ms: f64 = 0,
+
+    /// Returns true once the benchmark is done.
+    fn frame(self: *Bench, stats: *const World.Stats, dt_ms: f32, now_ns: i128) bool {
+        const start = self.load_start_ns orelse {
+            self.load_start_ns = now_ns;
+            return false;
+        };
+        if (self.frames == 0 and self.load_ms == 0) {
+            const loading = stats.pending > 0 or stats.generated_this_frame > 0 or stats.meshed_this_frame > 0;
+            if (loading) return false;
+            self.load_ms = @as(f64, @floatFromInt(now_ns - start)) / std.time.ns_per_ms;
+            return false;
+        }
+        self.frames += 1;
+        self.frame_ms += dt_ms;
+        self.update_ms += stats.update_ms;
+        self.draw_ms += stats.draw_ms;
+        if (self.frames < steady_frames) return false;
+
+        const n: f64 = steady_frames;
+        std.debug.print("bench: loaded {d} chunks ({d} meshed, {d} drawn, {d:.2} M vertices) in {d:.0} ms\n", .{
+            stats.loaded, stats.meshed, stats.drawn, @as(f64, @floatFromInt(stats.drawn_vertices)) / 1e6, self.load_ms,
+        });
+        const gen_us = debug_ui.perChunkUs(stats.gen_total_ns, stats.gen_total);
+        const mesh_us = debug_ui.perChunkUs(stats.mesh_total_ns, stats.mesh_total);
+        const gen_ms = @as(f64, @floatFromInt(stats.gen_total_ns)) / std.time.ns_per_ms;
+        const mesh_ms = @as(f64, @floatFromInt(stats.mesh_total_ns)) / std.time.ns_per_ms;
+        std.debug.print("bench: gen {d} chunks, {d:.1} us/chunk ({d:.0} ms total)\n", .{ stats.gen_total, gen_us, gen_ms });
+        std.debug.print("bench: mesh {d} chunks ({d} buried), {d:.1} us/chunk ({d:.0} ms total)\n", .{ stats.mesh_total, stats.mesh_skipped, mesh_us, mesh_ms });
+        std.debug.print("bench: steady frame {d:.3} ms, update {d:.3} ms, draw record {d:.3} ms\n", .{ self.frame_ms / n, self.update_ms / n, self.draw_ms / n });
+        return true;
+    }
+};
 
 fn moveCamera(camera: *Camera, settings: *const Settings, dt: f32) void {
     const keys = c.SDL_GetKeyboardState(null);

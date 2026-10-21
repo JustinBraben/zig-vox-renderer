@@ -39,22 +39,45 @@ pub const Stats = struct {
     generated_this_frame: u32 = 0,
     meshed_this_frame: u32 = 0,
     arena_full: bool = false,
+
+    // CPU time spent this frame
+    update_ms: f32 = 0,
+    gen_ms: f32 = 0,
+    mesh_ms: f32 = 0,
+    draw_ms: f32 = 0,
+    // totals since the last regenerate, for per-chunk averages
+    gen_total: u64 = 0,
+    gen_total_ns: u64 = 0,
+    mesh_total: u64 = 0,
+    mesh_total_ns: u64 = 0,
+    /// mesh passes skipped because the chunk was buried
+    mesh_skipped: u64 = 0,
 };
 
 allocator: Allocator,
+io: std.Io,
 terrain: Terrain,
 chunks: std.AutoHashMapUnmanaged(ChunkPos, *Chunk) = .empty,
+/// heightmaps of loaded chunk columns, keyed by column (x, z)
+heightmaps: std.AutoHashMapUnmanaged([2]i32, *Terrain.Heightmap) = .empty,
 /// column offsets within `offsets_radius + 2`, nearest first
 offsets: std.ArrayList([2]i32) = .empty,
 offsets_radius: i32 = -1,
 padded: *mesher.Padded,
 vertices: std.ArrayList(mesher.Vertex) = .empty,
 scratch_keys: std.ArrayList(ChunkPos) = .empty,
+scratch_columns: std.ArrayList([2]i32) = .empty,
+/// center and config of the previous update; unloading only runs when they change
+last_center: ?ChunkPos = null,
+last_config: ?Config = null,
+/// every chunk in range is generated and meshed, so updates can be skipped
+settled: bool = false,
 stats: Stats = .{},
 
-pub fn init(allocator: Allocator, seed: u64) !Self {
+pub fn init(allocator: Allocator, io: std.Io, seed: u64) !Self {
     return .{
         .allocator = allocator,
+        .io = io,
         .terrain = .{ .seed = seed },
         .padded = try allocator.create(mesher.Padded),
     };
@@ -64,6 +87,9 @@ pub fn deinit(self: *Self) void {
     var it = self.chunks.valueIterator();
     while (it.next()) |c| self.destroyChunk(c.*);
     self.chunks.deinit(self.allocator);
+    self.clearHeightmaps();
+    self.heightmaps.deinit(self.allocator);
+    self.scratch_columns.deinit(self.allocator);
     self.offsets.deinit(self.allocator);
     self.vertices.deinit(self.allocator);
     self.scratch_keys.deinit(self.allocator);
@@ -78,16 +104,35 @@ pub fn regenerate(self: *Self, arena: *MeshArena, seed: u64, frame: u64) !void {
         self.destroyChunk(c.*);
     }
     self.chunks.clearRetainingCapacity();
+    self.clearHeightmaps();
     self.terrain = .{ .seed = seed };
-    self.stats.arena_full = false;
+    self.stats = .{};
+    self.settled = false;
 }
 
 pub fn update(self: *Self, arena: *MeshArena, camera_pos: @Vector(3, f64), config: Config, frame: u64) !void {
+    const start = self.now();
+    var gen_ns: u64 = 0;
+    var mesh_ns: u64 = 0;
+    defer {
+        self.stats.gen_ms = toMs(gen_ns);
+        self.stats.mesh_ms = toMs(mesh_ns);
+        self.stats.update_ms = toMs(self.since(start));
+    }
+
     const center = ChunkPos.fromWorld(camera_pos);
     const r = @max(config.render_distance, 0);
-    if (r != self.offsets_radius) try self.buildOffsets(r);
-
-    try self.unloadFar(arena, center, r, config, frame);
+    if (!std.meta.eql(self.last_center, center) or !std.meta.eql(self.last_config, config)) {
+        if (r != self.offsets_radius) try self.buildOffsets(r);
+        try self.unloadFar(arena, center, r, config, frame);
+        self.last_center = center;
+        self.last_config = config;
+        self.settled = false;
+    }
+    self.stats.loaded = self.chunks.count();
+    self.stats.generated_this_frame = 0;
+    self.stats.meshed_this_frame = 0;
+    if (self.settled) return;
 
     // generate one ring beyond the view distance so edge chunks have neighbors to mesh against
     var generated: u32 = 0;
@@ -98,7 +143,9 @@ pub fn update(self: *Self, arena: *MeshArena, camera_pos: @Vector(3, f64), confi
             const pos: ChunkPos = .{ .x = center.x + off[0], .y = y, .z = center.z + off[1] };
             if (self.chunks.contains(pos)) continue;
             if (generated >= config.gen_budget) break :gen;
+            const t = self.now();
             try self.generateChunk(pos);
+            gen_ns += self.since(t);
             generated += 1;
         }
     }
@@ -119,19 +166,27 @@ pub fn update(self: *Self, arena: *MeshArena, camera_pos: @Vector(3, f64), confi
                 pending += 1;
                 continue;
             }
+            const t = self.now();
             try self.meshChunk(arena, c, frame);
+            mesh_ns += self.since(t);
             meshed += 1;
         }
     }
 
+    self.settled = generated == 0 and pending == 0;
     self.stats.loaded = self.chunks.count();
     self.stats.generated_this_frame = generated;
     self.stats.meshed_this_frame = meshed;
     self.stats.pending = pending;
+    self.stats.gen_total += generated;
+    self.stats.gen_total_ns += gen_ns;
+    self.stats.mesh_total += meshed;
+    self.stats.mesh_total_ns += mesh_ns;
 }
 
 /// Records draws for every meshed chunk in view. Expects `pipeline.bind` to have been called.
 pub fn draw(self: *Self, cmd: vk.CommandBuffer, pipeline: *const VoxelPipeline, camera_pos: @Vector(3, f64), frustum: ?math.Frustum, config: Config) void {
+    const start = self.now();
     const center = ChunkPos.fromWorld(camera_pos);
     const r = @max(config.render_distance, 0);
     var drawn: u32 = 0;
@@ -158,6 +213,19 @@ pub fn draw(self: *Self, cmd: vk.CommandBuffer, pipeline: *const VoxelPipeline, 
     self.stats.meshed = meshed;
     self.stats.drawn = drawn;
     self.stats.drawn_vertices = vertices;
+    self.stats.draw_ms = toMs(self.since(start));
+}
+
+fn now(self: *const Self) std.Io.Timestamp {
+    return .now(self.io, .awake);
+}
+
+fn since(self: *const Self, start: std.Io.Timestamp) u64 {
+    return @intCast(@max(start.untilNow(self.io, .awake).nanoseconds, 0));
+}
+
+fn toMs(ns: u64) f32 {
+    return @floatCast(@as(f64, @floatFromInt(ns)) / std.time.ns_per_ms);
 }
 
 fn buildOffsets(self: *Self, r: i32) !void {
@@ -190,21 +258,54 @@ fn unloadFar(self: *Self, arena: *MeshArena, center: ChunkPos, r: i32, config: C
         if (c.mesh) |range| try arena.free(range, frame);
         self.destroyChunk(c);
     }
+
+    self.scratch_columns.clearRetainingCapacity();
+    var columns = self.heightmaps.keyIterator();
+    while (columns.next()) |column| {
+        if (@abs(column[0] - center.x) > r + 2 or @abs(column[1] - center.z) > r + 2) {
+            try self.scratch_columns.append(self.allocator, column.*);
+        }
+    }
+    for (self.scratch_columns.items) |column| {
+        self.allocator.destroy(self.heightmaps.fetchRemove(column).?.value);
+    }
+}
+
+fn clearHeightmaps(self: *Self) void {
+    var it = self.heightmaps.valueIterator();
+    while (it.next()) |map| self.allocator.destroy(map.*);
+    self.heightmaps.clearRetainingCapacity();
+}
+
+/// The column's heightmap, computed on first use.
+fn heightmap(self: *Self, x: i32, z: i32) !*const Terrain.Heightmap {
+    if (self.heightmaps.get(.{ x, z })) |map| return map;
+    const map = try self.allocator.create(Terrain.Heightmap);
+    errdefer self.allocator.destroy(map);
+    self.terrain.heightmap(x, z, map);
+    try self.heightmaps.put(self.allocator, .{ x, z }, map);
+    return map;
 }
 
 fn generateChunk(self: *Self, pos: ChunkPos) !void {
+    const map = try self.heightmap(pos.x, pos.z);
     const c = try self.allocator.create(Chunk);
-    errdefer self.allocator.destroy(c);
     c.* = .{ .pos = pos };
+    errdefer self.destroyChunk(c);
 
-    const blocks = try self.allocator.create(chunk.Blocks);
-    if (self.terrain.generate(pos, blocks)) {
-        c.blocks = blocks;
-    } else {
-        self.allocator.destroy(blocks);
-        // nothing to mesh in an all-air chunk
-        c.state = .meshed;
+    switch (Terrain.classify(pos.y, map)) {
+        .uniform => |block| {
+            c.uniform = block;
+            // nothing to mesh in an all-air chunk
+            if (!block.isOpaque()) c.state = .meshed;
+        },
+        .mixed => {
+            const blocks = try self.allocator.create(chunk.Blocks);
+            Terrain.fill(pos.y, map, blocks);
+            c.blocks = blocks;
+        },
     }
+    c.updateSolidSides();
     try self.chunks.put(self.allocator, pos, c);
 }
 
@@ -227,10 +328,27 @@ fn neighborsLoaded(self: *const Self, pos: ChunkPos) bool {
     return true;
 }
 
+/// True when no face of the chunk can be visible: it is solid and each face
+/// neighbor's side touching it is solid too.
+fn buried(self: *const Self, c: *const Chunk) bool {
+    if (!c.isSolid()) return false;
+    // same side order as `Chunk.solid_sides`; side ^ 1 is the opposite side
+    const neighbors = [6][3]i32{ .{ 1, 0, 0 }, .{ -1, 0, 0 }, .{ 0, 1, 0 }, .{ 0, -1, 0 }, .{ 0, 0, 1 }, .{ 0, 0, -1 } };
+    for (neighbors, 0..) |d, side| {
+        const n = self.chunks.get(c.pos.offset(d[0], d[1], d[2])) orelse return false;
+        if (n.solid_sides & (@as(u6, 1) << @intCast(side ^ 1)) == 0) return false;
+    }
+    return true;
+}
+
 fn meshChunk(self: *Self, arena: *MeshArena, c: *Chunk, frame: u64) !void {
-    self.fillPadded(c.pos);
     self.vertices.clearRetainingCapacity();
-    try mesher.meshChunk(self.allocator, self.padded, &self.vertices);
+    if (self.buried(c)) {
+        self.stats.mesh_skipped += 1;
+    } else {
+        self.fillPadded(c.pos);
+        try mesher.meshChunk(self.allocator, self.padded, &self.vertices);
+    }
 
     if (c.mesh) |old| try arena.free(old, frame);
     c.mesh = null;
@@ -246,12 +364,11 @@ fn meshChunk(self: *Self, arena: *MeshArena, c: *Chunk, frame: u64) !void {
 
 /// Copies the chunk and a one-block border of its 26 neighbors into `self.padded`.
 fn fillPadded(self: *Self, pos: ChunkPos) void {
-    var neighbors: [3][3][3]?*const chunk.Blocks = undefined;
+    var neighbors: [3][3][3]?*const Chunk = undefined;
     for (0..3) |y| {
         for (0..3) |z| {
             for (0..3) |x| {
-                const n = self.chunks.get(pos.offset(@as(i32, @intCast(x)) - 1, @as(i32, @intCast(y)) - 1, @as(i32, @intCast(z)) - 1));
-                neighbors[y][z][x] = if (n) |c| c.blocks else null;
+                neighbors[y][z][x] = self.chunks.get(pos.offset(@as(i32, @intCast(x)) - 1, @as(i32, @intCast(y)) - 1, @as(i32, @intCast(z)) - 1));
             }
         }
     }
@@ -271,8 +388,8 @@ fn fillPadded(self: *Self, pos: ChunkPos) void {
     for (axis, 0..) |ay, py| {
         for (axis, 0..) |az, pz| {
             for (axis, 0..) |ax, px| {
-                const blocks = neighbors[ay.n][az.n][ax.n];
-                self.padded[mesher.paddedIndex(px, py, pz)] = if (blocks) |b| b[chunk.index(ax.local, ay.local, az.local)] else .air;
+                const n = neighbors[ay.n][az.n][ax.n];
+                self.padded[mesher.paddedIndex(px, py, pz)] = if (n) |c| c.get(ax.local, ay.local, az.local) else .air;
             }
         }
     }
