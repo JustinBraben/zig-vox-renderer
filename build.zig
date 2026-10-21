@@ -4,86 +4,94 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const options = .{
-        .enable_ztracy = b.option(
-            bool,
-            "enable_ztracy",
-            "Enable Tracy profile markers",
-        ) orelse false,
-        .enable_fibers = b.option(
-            bool,
-            "enable_fibers",
-            "Enable Tracy fiber support",
-        ) orelse false,
-        .on_demand = b.option(
-            bool,
-            "on_demand",
-            "Build tracy with TRACY_ON_DEMAND",
-        ) orelse false,
-    };
+    // dvui with our own (custom) backend; the Vulkan renderer is exposed as a separate module.
+    const dvui_dep = b.dependency("dvui", .{
+        .target = target,
+        .optimize = optimize,
+        .backend = .custom,
+        .renderer = .vulkan,
+        .libc = true,
+        .@"stb-image" = true,
+        .freetype = false,
+        .@"tree-sitter" = false,
+    });
+    const dvui_mod = dvui_dep.module("dvui");
+    const vk_renderer_mod = dvui_dep.module("dvui_vulkan_renderer");
 
-    const exe = b.addExecutable(.{
-        .name = "zig-vox-renderer",
-        .root_source_file = b.path("src/main.zig"),
+    // SDL3 built from source
+    const sdl3_dep = b.dependency("sdl3", .{
         .target = target,
         .optimize = optimize,
     });
+    const sdl3_lib = sdl3_dep.artifact("SDL3");
 
-    const zglfw = b.dependency("zglfw", .{
+    const sdl_translate_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/platform/sdl3-c.h"),
         .target = target,
+        .optimize = optimize,
     });
-    const zopengl = b.dependency("zopengl", .{});
-    const zgui = b.dependency("zgui", .{
+    sdl_translate_c.addIncludePath(sdl3_lib.getEmittedIncludeTree());
+    const sdl_c_mod = sdl_translate_c.createModule();
+    sdl_c_mod.linkLibrary(sdl3_lib);
+
+    // custom dvui backend: SDL3 for platform/events, dvui's Vulkan renderer for drawing
+    const backend_mod = b.createModule(.{
+        .root_source_file = b.path("src/ui/dvui_sdl_vk_backend.zig"),
         .target = target,
-        .backend = .glfw_opengl3,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "dvui", .module = dvui_mod },
+            .{ .name = "dvui_vulkan_renderer", .module = vk_renderer_mod },
+            .{ .name = "sdl3-c", .module = sdl_c_mod },
+        },
     });
-    const zstbi = b.dependency("zstbi", .{});
-    const zmath = b.dependency("zmath", .{});
-    const znoise = b.dependency("znoise", .{});
-    const ztracy = b.dependency("ztracy", .{
-        .enable_ztracy = options.enable_ztracy,
-        .enable_fibers = options.enable_fibers,
-        .on_demand = options.on_demand,
+    dvui_mod.addImport("backend", backend_mod);
+
+    const exe_mod = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "dvui", .module = dvui_mod },
+            .{ .name = "dvui_vulkan_renderer", .module = vk_renderer_mod },
+            .{ .name = "sdl3-c", .module = sdl_c_mod },
+            .{ .name = "sdl_vk_backend", .module = backend_mod },
+        },
     });
+    addShader(b, exe_mod, "voxel_vert", "src/shaders/voxel.vert");
+    addShader(b, exe_mod, "voxel_frag", "src/shaders/voxel.frag");
 
-    exe.root_module.addImport("zglfw", zglfw.module("root"));
-    exe.linkLibrary(zglfw.artifact("glfw"));
-    exe.root_module.addImport("zopengl", zopengl.module("root"));
-    exe.root_module.addImport("zgui", zgui.module("root"));
-    exe.linkLibrary(zgui.artifact("imgui"));
-    exe.root_module.addImport("zstbi", zstbi.module("root"));
-    exe.linkLibrary(zstbi.artifact("zstbi"));
-    exe.root_module.addImport("zmath", zmath.module("root"));
-    exe.root_module.addImport("znoise", znoise.module("root"));
-    exe.linkLibrary(znoise.artifact("FastNoiseLite"));
-    exe.root_module.addImport("ztracy", ztracy.module("root"));
-    exe.linkLibrary(ztracy.artifact("tracy"));
-
+    const exe = b.addExecutable(.{
+        .name = "zig_vox_renderer",
+        .root_module = exe_mod,
+    });
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
+    if (b.args) |args| run_cmd.addArgs(args);
+
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    const exe_unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/main.zig"),
-        .test_runner = .{ 
-            .path = b.path("test/test_runner.zig"),
-            .mode = .simple,
-        },
-        .target = target,
-        .optimize = optimize,
+    const tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/tests.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
-    exe_unit_tests.root_module.addImport("zopengl", zopengl.module("root"));
-    exe_unit_tests.root_module.addImport("zstbi", zstbi.module("root"));
-    exe_unit_tests.linkLibrary(zstbi.artifact("zstbi"));
-    exe_unit_tests.root_module.addImport("znoise", znoise.module("root"));
-    exe_unit_tests.linkLibrary(znoise.artifact("FastNoiseLite"));
-    const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
     const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_exe_unit_tests.step);
+    test_step.dependOn(&b.addRunArtifact(tests).step);
+}
+
+/// Compiles a GLSL shader to SPIR-V with glslc (from the Vulkan SDK) and makes it
+/// available to `module` as `@embedFile(import_name)`.
+fn addShader(b: *std.Build, module: *std.Build.Module, import_name: []const u8, source: []const u8) void {
+    const glslc = b.addSystemCommand(&.{ "glslc", "--target-env=vulkan1.3" });
+    if (module.optimize != .Debug) glslc.addArg("-O") else glslc.addArg("-g");
+    glslc.addArg("-o");
+    const spv = glslc.addOutputFileArg(b.fmt("{s}.spv", .{import_name}));
+    glslc.addFileArg(b.path(source));
+    module.addAnonymousImport(import_name, .{ .root_source_file = spv });
 }

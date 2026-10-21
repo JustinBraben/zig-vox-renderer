@@ -2,35 +2,15 @@
     .name = .zig_vox_renderer,
     .fingerprint = 0xe05da49543749f42,
     .version = "0.1.0",
-    .minimum_zig_version = "0.14.0",
+    .minimum_zig_version = "0.16.0",
     .dependencies = .{
-        .zmath = .{
-            .url = "https://github.com/zig-gamedev/zmath/archive/ccf7297ef6c01e21b2d51ad81b5b6ce929e86a00.tar.gz",
-            .hash = "zmath-0.11.0-dev-wjwivZY1AwDO7yxNmZ5HWoU03f9mFBet8LN9-oYc3i29",
+        .dvui = .{
+            .url = "https://github.com/jedugsem/dvui/archive/b3e1113c7f9b7a416a4c29ed3532267278828172.tar.gz",
+            .hash = "dvui-0.5.0-dev-AQFJmU1eAwFCeyCTtKeM0725C5p9xr6DeuvCB7RQP124",
         },
-        .zgui = .{
-            .url = "https://github.com/zig-gamedev/zgui/archive/e8d6994cc43325c7dfaac69d27c9a7c27d0012c2.tar.gz",
-            .hash = "zgui-0.6.0-dev--L6sZCCGaACkWlRBJOh9dEJ4fjKp0HenyS8__Bzkvl6q",
-        },
-        .zstbi = .{
-            .url = "https://github.com/zig-gamedev/zstbi/archive/ec86094475a10ba07b141b12b7020f7b88b0e77b.tar.gz",
-            .hash = "zstbi-0.10.0-AAAAAH6VBwAJ6i_4SWBx2-RHcxpi5sfHMbaspaw6AZkq",
-        },
-        .zopengl = .{
-            .url = "https://github.com/zig-gamedev/zopengl/archive/67cd98449c9b766086531115f0ec6c4ace095af7.tar.gz",
-            .hash = "zopengl-0.6.0-dev-AAAAAAtUCADc6Ew_wTmTl_LRe3Z2lLK6WraJuGhT0bmj",
-        },
-        .zglfw = .{
-            .url = "https://github.com/zig-gamedev/zglfw/archive/dcb1dae7d4a90f88b70dbae73300ab9b19fb250c.tar.gz",
-            .hash = "zglfw-0.10.0-dev-zgVDNJmZIQCIiO_94Sp5jqrPtz4Eumk3bDcxS7dSZfIj",
-        },
-        .znoise = .{
-            .url = "https://github.com/zig-gamedev/znoise/archive/9c56051ce8aa915a20804e3948875331acefbf20.tar.gz",
-            .hash = "znoise-0.3.0-dev-AAAAAMOjAQCOFsgDZuKi-L0_HGdrCb9HwVf00PDWRAVV",
-        },
-        .ztracy = .{
-            .url = "https://github.com/zig-gamedev/ztracy/archive/d6f78fe19497a5b341329f6f67e9f9ba38635e8e.tar.gz",
-            .hash = "ztracy-0.14.0-dev-zHJSq08NFwD4iNq3K_gFxZ7Y8mMQ5wVM494x8c4R2sMz",
+        .sdl3 = .{
+            .url = "git+https://github.com/nat3Github/lib-sdl3-dev-fork#3aec7d397ca8997725dcb624f7470a60c9b33734",
+            .hash = "sdl-0.4.2+3.4.4-SDL--gqNpQF1CjofImvjmIBRf7mkJns3eCFIsRbucO1m",
         },
     },
     .paths = .{

@@ -1,130 +1,52 @@
+//! Free-fly camera. The position is kept in f64 and everything is rendered
+//! relative to it, so precision holds up far from the origin.
+
 const std = @import("std");
-const math = std.math;
-const Utils = @import("utils.zig");
-const zm = @import("zmath");
+const math = @import("math.zig");
+const Vec3 = math.Vec3;
+const Mat4 = math.Mat4;
 
-const Camera = @This();
+const Self = @This();
 
-pub const CameraMovement = enum {
-    FORWARD,
-    BACKWARD,
-    LEFT,
-    RIGHT,
-};
+pub const world_up: Vec3 = .{ 0, 1, 0 };
+pub const near_plane = 0.05;
 
-const WORLD_UP = zm.loadArr3(.{0.0, 1.0, 0.0});
-const MOVEMENT_SPEED: f32 = 2.5;
-const MOUSE_SENSITIVITY: f32 = 0.1;
+position: @Vector(3, f64) = .{ 0, 90, 0 },
+/// degrees; 0 looks down -Z, increasing turns towards +X
+yaw: f32 = 30,
+/// degrees, clamped to +-89
+pitch: f32 = -20,
 
-// Camera attributes
-position: zm.F32x4 = zm.loadArr3(.{0.0, 0.0, 0.0}),
-front: zm.F32x4 = zm.loadArr3(.{0.0, 0.0, -1.0}),
-up: zm.F32x4 = undefined,
-right: zm.F32x4 = undefined,
-
-// euler Angles
-yaw: f32 = -90,
-pitch: f32 = 0.0,
-
-// camera options
-zoom: f32 = 45.0,
-speed_modifier: f32 = 1.0,
-
-/// Initialize the camera.
-/// If null is passed initial position is .{0.0, 0.0, 0.0}
-pub fn init(position: ?zm.F32x4) Camera {
-    const front = zm.loadArr3(.{0.0, 0.0, -1.0});
-    const world_up = zm.loadArr3(.{0.0, 1.0, 0.0});
-    const right = zm.normalize3(zm.cross3(front, world_up));
-    const up = zm.normalize3(zm.cross3(right, front));
-
-    return .{
-        .position = if (position) |val| val else zm.loadArr3(.{0.0, 0.0, 0.0}),
-        .right = zm.normalize3(zm.cross3(front, world_up)),
-        .up = up,
-    };
+pub fn forward(self: Self) Vec3 {
+    return math.fromDirection(self.yaw, self.pitch);
 }
 
-/// returns the view matrix calculated using Euler Angles and the LookAt Matrix
-pub fn getViewMatrix(self: *Camera) zm.Mat {
-    return zm.lookAtRh(self.position, self.position + self.front, self.up);
+pub fn right(self: Self) Vec3 {
+    return math.normalize(math.cross(self.forward(), world_up));
 }
 
-/// TODO: Implement
-pub fn getProjMatrix(self: *Camera) zm.Mat {
-    _ = &self;
-    return zm.identity(); 
+/// Applies a mouse delta (in pixels).
+pub fn look(self: *Self, dx: f32, dy: f32, sensitivity: f32) void {
+    self.yaw = @mod(self.yaw + dx * sensitivity, 360);
+    self.pitch = std.math.clamp(self.pitch - dy * sensitivity, -89, 89);
 }
 
-/// TODO: Implement
-pub fn getProjViewMatrix(self: *Camera) zm.Mat {
-    _ = &self;
-    return zm.identity(); 
+/// Moves by `amount` along (right, world up, forward).
+pub fn move(self: *Self, amount: Vec3) void {
+    const delta = math.scale(self.right(), amount[0]) + math.scale(world_up, amount[1]) + math.scale(self.forward(), amount[2]);
+    self.position += @as(@Vector(3, f64), @floatCast(delta));
 }
 
-/// returns the view position of camera as [3]f32
-pub fn getViewPos(self: *Camera) [3]f32 {
-    return zm.vecToArr3(self.position);
+/// View matrix with the camera at the origin (camera-relative rendering).
+pub fn view(self: Self) Mat4 {
+    return Mat4.lookTo(.{ 0, 0, 0 }, self.forward(), world_up);
 }
 
-pub fn getFrontPos(self: *Camera) [3]f32 {
-    return zm.vecToArr3(self.front);
+pub fn projection(fov_deg: f32, aspect: f32) Mat4 {
+    return Mat4.perspectiveReverseZ(std.math.degreesToRadians(fov_deg), aspect, near_plane);
 }
 
-/// processes input received from any keyboard-like input system. 
-/// Accepts input parameter in the form of camera defined ENUM (to abstract it from windowing systems)
-pub fn processKeyboard(self: *Camera, direction: Camera.CameraMovement, delta_time: f32) void {
-    const velocity = zm.f32x4s(MOVEMENT_SPEED * delta_time);
-    switch (direction) {   
-        .FORWARD => self.position += self.front * velocity * @as(zm.F32x4, @splat(self.speed_modifier)),
-        .BACKWARD => self.position -= self.front * velocity * @as(zm.F32x4, @splat(self.speed_modifier)),
-        .LEFT => self.position -= self.right * velocity * @as(zm.F32x4, @splat(self.speed_modifier)),
-        .RIGHT => self.position += self.right * velocity * @as(zm.F32x4, @splat(self.speed_modifier)),
-    }
-    // make sure the user stays at the ground level
-    // self.position[1] = 0.0;
-}
-
-/// Processes input received from a mouse input system. 
-/// Expects the offset value in both the x and y direction.
-pub fn processMouseMovement(self: *Camera, xoffset: f64, yoffset: f64, constrain_pitch: bool) void {
-    const _xoffset = @as(f32, @floatCast(xoffset)) * MOUSE_SENSITIVITY;
-    const _yoffset = @as(f32, @floatCast(yoffset)) * MOUSE_SENSITIVITY;
-
-    self.yaw += _xoffset;
-    self.pitch += _yoffset;
-
-    // make sure that when pitch is out of bounds, screen doesn't get flipped
-    if (constrain_pitch) {
-        if (self.pitch > 89.0)
-            self.pitch = 89.0;
-        if (self.pitch < -89.0)
-            self.pitch = -89.0;
-    }
-
-    // update Front, Right and Up Vectors using the updated Euler angles
-    self.updateCameraVectors();
-}
-
-/// Processes input received from a mouse scroll-wheel event. 
-/// Only requires input on the vertical wheel-axis
-pub fn processMouseScroll(self: *Camera, yoffset: f64) void {
-    self.zoom -= @as(f32, @floatCast(yoffset));
-    if (self.zoom < 1.0)
-        self.zoom = 1.0;
-    if (self.zoom > 45.0)
-        self.zoom = 45.0;
-}
-
-/// Calculates the front vector from the Camera's (updated) Euler Angles
-fn updateCameraVectors(self: *Camera) void {
-    // calculate the new Front vector
-    var front: zm.F32x4 = undefined;
-    front[0] = @cos(Utils.radians(self.yaw)) * @cos(Utils.radians(self.pitch));
-    front[1] = @sin(Utils.radians(self.pitch));
-    front[2] = @sin(Utils.radians(self.yaw)) * @cos(Utils.radians(self.pitch));
-    self.front = front;
-    // also re-calculate the Right and Up vector
-    self.right = zm.normalize3(zm.cross3(self.front, WORLD_UP));  // normalize the vectors, because their length gets closer to 0 the more you look up or down which results in slower movement.
-    self.up    = zm.normalize3(zm.cross3(self.right, self.front));
+/// `p` relative to the camera, in f32.
+pub fn relative(self: Self, p: @Vector(3, f64)) Vec3 {
+    return @floatCast(p - self.position);
 }
