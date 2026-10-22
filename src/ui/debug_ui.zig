@@ -71,6 +71,8 @@ pub fn draw(settings: *Settings, stats: Stats) Actions {
         var section = dvui.box(@src(), .{}, .{ .expand = .horizontal, .margin = .{ .x = 12 } });
         defer section.deinit();
 
+        _ = dvui.checkbox(@src(), &settings.skybox, "Skybox", .{});
+
         heading(@src(), "Sun");
         _ = dvui.sliderEntry(@src(), "Azimuth: {d:0.0}", .{ .value = &settings.sun_azimuth, .min = 0, .max = 360, .interval = 1 }, .{ .expand = .horizontal });
         _ = dvui.sliderEntry(@src(), "Elevation: {d:0.0}", .{ .value = &settings.sun_elevation, .min = -10, .max = 90, .interval = 1 }, .{ .expand = .horizontal });
@@ -79,7 +81,7 @@ pub fn draw(settings: *Settings, stats: Stats) Actions {
 
         heading(@src(), "Ambient");
         _ = dvui.sliderEntry(@src(), "Intensity: {d:0.02}", .{ .value = &settings.ambient_intensity, .min = 0, .max = 2 }, .{ .expand = .horizontal });
-        dvui.labelNoFmt(@src(), "Sky (also clear + fog color)", .{}, .{});
+        dvui.labelNoFmt(@src(), "Sky (also clear + fog color without skybox)", .{}, .{});
         colorSliders(@src(), &settings.sky_color);
         dvui.labelNoFmt(@src(), "Ground", .{}, .{});
         colorSliders(@src(), &settings.ground_color);

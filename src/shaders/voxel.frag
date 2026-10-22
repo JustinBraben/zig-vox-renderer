@@ -7,8 +7,10 @@ layout(set = 0, binding = 0) uniform Scene {
     vec4 sky_color;
     vec4 ground_color;
     vec4 fog_color;
-    vec4 params; // x: fog start, y: fog end, z: ao strength
+    vec4 params; // x: fog start, y: fog end, z: ao strength, w: 1 = fog towards the skybox
 } scene;
+
+layout(set = 0, binding = 1) uniform samplerCube sky;
 
 layout(location = 0) in vec3 v_rel_pos;
 layout(location = 1) in vec3 v_normal;
@@ -39,7 +41,9 @@ void main() {
     float fog_end = scene.params.y;
     if (fog_end > 0.0) {
         float t = smoothstep(fog_start, fog_end, length(v_rel_pos));
-        color = mix(color, scene.fog_color.rgb, t);
+        // fade into whatever sky is behind the block (the cubemap is sRGB, so this is linear)
+        vec3 fog = scene.params.w > 0.0 ? texture(sky, normalize(v_rel_pos)).rgb : scene.fog_color.rgb;
+        color = mix(color, fog, t);
     }
 
     out_color = vec4(linearToSrgb(color), 1.0);

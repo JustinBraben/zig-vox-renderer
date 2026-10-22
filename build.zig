@@ -58,14 +58,22 @@ pub fn build(b: *std.Build) !void {
             .{ .name = "sdl_vk_backend", .module = backend_mod },
         },
     });
-    addShader(b, exe_mod, "voxel_vert", "src/shaders/voxel.vert");
-    addShader(b, exe_mod, "voxel_frag", "src/shaders/voxel.frag");
-
     const exe = b.addExecutable(.{
         .name = "zig_vox_renderer",
         .root_module = exe_mod,
     });
     b.installArtifact(exe);
+
+    // assets are loaded at startup from `assets/` next to the executable (see src/assets.zig)
+    addShader(b, optimize, "src/shaders/voxel.vert");
+    addShader(b, optimize, "src/shaders/voxel.frag");
+    addShader(b, optimize, "src/shaders/sky.vert");
+    addShader(b, optimize, "src/shaders/sky.frag");
+    b.installDirectory(.{
+        .source_dir = b.path("assets/textures"),
+        .install_dir = .bin,
+        .install_subdir = "assets/textures",
+    });
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
@@ -85,13 +93,14 @@ pub fn build(b: *std.Build) !void {
     test_step.dependOn(&b.addRunArtifact(tests).step);
 }
 
-/// Compiles a GLSL shader to SPIR-V with glslc (from the Vulkan SDK) and makes it
-/// available to `module` as `@embedFile(import_name)`.
-fn addShader(b: *std.Build, module: *std.Build.Module, import_name: []const u8, source: []const u8) void {
+/// Compiles a GLSL shader to SPIR-V with glslc (from the Vulkan SDK) and installs it
+/// as `bin/assets/shaders/<file name>.spv`, e.g. `voxel.vert.spv`.
+fn addShader(b: *std.Build, optimize: std.builtin.OptimizeMode, source: []const u8) void {
+    const name = b.fmt("{s}.spv", .{std.fs.path.basename(source)});
     const glslc = b.addSystemCommand(&.{ "glslc", "--target-env=vulkan1.3" });
-    if (module.optimize != .Debug) glslc.addArg("-O") else glslc.addArg("-g");
+    if (optimize != .Debug) glslc.addArg("-O") else glslc.addArg("-g");
     glslc.addArg("-o");
-    const spv = glslc.addOutputFileArg(b.fmt("{s}.spv", .{import_name}));
+    const spv = glslc.addOutputFileArg(name);
     glslc.addFileArg(b.path(source));
-    module.addAnonymousImport(import_name, .{ .root_source_file = spv });
+    b.getInstallStep().dependOn(&b.addInstallFileWithDir(spv, .bin, b.fmt("assets/shaders/{s}", .{name})).step);
 }

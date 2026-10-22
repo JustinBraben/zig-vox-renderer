@@ -1,5 +1,6 @@
 //! Opaque voxel pipeline: packed chunk vertices, depth tested (reverse-Z),
-//! lit by a per-frame scene uniform buffer.
+//! lit by a per-frame scene uniform buffer. Its descriptor sets also hold the sky
+//! cubemap (binding 1), shared with the sky pipeline.
 
 const std = @import("std");
 
@@ -8,12 +9,11 @@ const vk = VulkanContext.vk;
 const VkMemory = @import("dvui_vulkan_renderer").VkMemory;
 const Buffer = @import("buffer.zig");
 const MeshArena = @import("mesh_arena.zig");
+const Texture = @import("texture.zig");
+const Assets = @import("../assets.zig");
 const math = @import("../math.zig");
 
 const Self = @This();
-
-const vert_spv align(@alignOf(u32)) = @embedFile("voxel_vert").*;
-const frag_spv align(@alignOf(u32)) = @embedFile("voxel_frag").*;
 
 /// std140 layout of `Scene` in voxel.vert/frag. Colors are linear.
 pub const Scene = extern struct {
@@ -29,7 +29,7 @@ pub const Scene = extern struct {
     ground_color: [4]f32,
     /// rgb: fog color
     fog_color: [4]f32,
-    /// x: fog start, y: fog end (0 = no fog), z: ao strength
+    /// x: fog start, y: fog end (0 = no fog), z: ao strength, w: 1 = fog towards the skybox
     params: [4]f32,
 };
 
@@ -49,17 +49,25 @@ scene_buffers: [max_frames]Buffer = undefined,
 descriptor_sets: [max_frames]vk.DescriptorSet = undefined,
 frame_count: usize,
 
-pub fn init(device: vk.DeviceProxy, memory: VkMemory, color_format: vk.Format, depth_format: vk.Format, frame_count: usize) !Self {
+pub fn init(device: vk.DeviceProxy, memory: VkMemory, assets: *const Assets, sky: *const Texture, color_format: vk.Format, depth_format: vk.Format, frame_count: usize) !Self {
     std.debug.assert(frame_count <= max_frames);
 
     const set_layout = try device.createDescriptorSetLayout(&.{
-        .binding_count = 1,
-        .p_bindings = &.{.{
-            .binding = 0,
-            .descriptor_type = .uniform_buffer,
-            .descriptor_count = 1,
-            .stage_flags = .{ .vertex_bit = true, .fragment_bit = true },
-        }},
+        .binding_count = 2,
+        .p_bindings = &.{
+            .{
+                .binding = 0,
+                .descriptor_type = .uniform_buffer,
+                .descriptor_count = 1,
+                .stage_flags = .{ .vertex_bit = true, .fragment_bit = true },
+            },
+            .{
+                .binding = 1,
+                .descriptor_type = .combined_image_sampler,
+                .descriptor_count = 1,
+                .stage_flags = .{ .fragment_bit = true },
+            },
+        },
     }, null);
     errdefer device.destroyDescriptorSetLayout(set_layout, null);
 
@@ -75,13 +83,16 @@ pub fn init(device: vk.DeviceProxy, memory: VkMemory, color_format: vk.Format, d
     }, null);
     errdefer device.destroyPipelineLayout(layout, null);
 
-    const pipeline = try createPipeline(device, layout, color_format, depth_format);
+    const pipeline = try createPipeline(device, assets, layout, color_format, depth_format);
     errdefer device.destroyPipeline(pipeline, null);
 
     const descriptor_pool = try device.createDescriptorPool(&.{
         .max_sets = @intCast(frame_count),
-        .pool_size_count = 1,
-        .p_pool_sizes = &.{.{ .type = .uniform_buffer, .descriptor_count = @intCast(frame_count) }},
+        .pool_size_count = 2,
+        .p_pool_sizes = &.{
+            .{ .type = .uniform_buffer, .descriptor_count = @intCast(frame_count) },
+            .{ .type = .combined_image_sampler, .descriptor_count = @intCast(frame_count) },
+        },
     }, null);
     errdefer device.destroyDescriptorPool(descriptor_pool, null);
 
@@ -106,16 +117,28 @@ pub fn init(device: vk.DeviceProxy, memory: VkMemory, color_format: vk.Format, d
             .p_set_layouts = &.{set_layout},
         }, @ptrCast(&self.descriptor_sets[i]));
 
-        device.updateDescriptorSets(&.{.{
-            .dst_set = self.descriptor_sets[i],
-            .dst_binding = 0,
-            .dst_array_element = 0,
-            .descriptor_count = 1,
-            .descriptor_type = .uniform_buffer,
-            .p_image_info = &.{},
-            .p_buffer_info = &.{.{ .buffer = self.scene_buffers[i].handle, .offset = 0, .range = @sizeOf(Scene) }},
-            .p_texel_buffer_view = &.{},
-        }}, &.{});
+        device.updateDescriptorSets(&.{
+            .{
+                .dst_set = self.descriptor_sets[i],
+                .dst_binding = 0,
+                .dst_array_element = 0,
+                .descriptor_count = 1,
+                .descriptor_type = .uniform_buffer,
+                .p_image_info = &.{},
+                .p_buffer_info = &.{.{ .buffer = self.scene_buffers[i].handle, .offset = 0, .range = @sizeOf(Scene) }},
+                .p_texel_buffer_view = &.{},
+            },
+            .{
+                .dst_set = self.descriptor_sets[i],
+                .dst_binding = 1,
+                .dst_array_element = 0,
+                .descriptor_count = 1,
+                .descriptor_type = .combined_image_sampler,
+                .p_image_info = &.{.{ .sampler = sky.sampler, .image_view = sky.view, .image_layout = .shader_read_only_optimal }},
+                .p_buffer_info = &.{},
+                .p_texel_buffer_view = &.{},
+            },
+        }, &.{});
     }
 
     return self;
@@ -158,10 +181,10 @@ pub fn drawChunk(self: *const Self, cmd: vk.CommandBuffer, origin: math.Vec3, ra
     self.device.cmdDrawIndexed(cmd, range.count / 4 * 6, 1, 0, @intCast(range.first), 0);
 }
 
-fn createPipeline(device: vk.DeviceProxy, layout: vk.PipelineLayout, color_format: vk.Format, depth_format: vk.Format) !vk.Pipeline {
-    const vertex_module = try createShaderModule(device, &vert_spv);
+fn createPipeline(device: vk.DeviceProxy, assets: *const Assets, layout: vk.PipelineLayout, color_format: vk.Format, depth_format: vk.Format) !vk.Pipeline {
+    const vertex_module = try loadShaderModule(device, assets, "voxel.vert");
     defer device.destroyShaderModule(vertex_module, null);
-    const fragment_module = try createShaderModule(device, &frag_spv);
+    const fragment_module = try loadShaderModule(device, assets, "voxel.frag");
     defer device.destroyShaderModule(fragment_module, null);
 
     const rendering_info = vk.PipelineRenderingCreateInfo{
@@ -258,6 +281,13 @@ fn createPipeline(device: vk.DeviceProxy, layout: vk.PipelineLayout, color_forma
         .base_pipeline_index = -1,
     }}, null, @ptrCast(&pipeline));
     return pipeline;
+}
+
+/// Shader module from `assets/shaders/<name>.spv`.
+pub fn loadShaderModule(device: vk.DeviceProxy, assets: *const Assets, name: []const u8) !vk.ShaderModule {
+    const spv = try assets.readShader(name);
+    defer assets.gpa.free(spv);
+    return createShaderModule(device, spv);
 }
 
 fn createShaderModule(device: vk.DeviceProxy, spv: []align(@alignOf(u32)) const u8) !vk.ShaderModule {

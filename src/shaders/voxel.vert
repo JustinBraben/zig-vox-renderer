@@ -13,7 +13,7 @@ layout(set = 0, binding = 0) uniform Scene {
     vec4 sky_color;
     vec4 ground_color;
     vec4 fog_color;
-    vec4 params; // x: fog start, y: fog end, z: ao strength
+    vec4 params; // x: fog start, y: fog end, z: ao strength, w: 1 = fog towards the skybox
 } scene;
 
 layout(push_constant) uniform Push {

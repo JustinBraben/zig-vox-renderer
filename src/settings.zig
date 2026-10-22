@@ -10,6 +10,8 @@ pub const Settings = struct {
     mouse_sensitivity: f32 = 0.12,
 
     // lighting
+    /// draw the skybox and fade fog into it; otherwise the sky is `sky_color`
+    skybox: bool = true,
     sun_azimuth: f32 = 35,
     sun_elevation: f32 = 45,
     sun_color: [3]f32 = .{ 1.0, 0.94, 0.82 },

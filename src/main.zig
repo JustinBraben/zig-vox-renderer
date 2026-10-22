@@ -10,6 +10,9 @@ const Swapchain = @import("gfx/swapchain.zig");
 const DepthBuffer = @import("gfx/depth_buffer.zig");
 const MeshArena = @import("gfx/mesh_arena.zig");
 const VoxelPipeline = @import("gfx/voxel_pipeline.zig");
+const SkyPipeline = @import("gfx/sky_pipeline.zig");
+const Texture = @import("gfx/texture.zig");
+const Assets = @import("assets.zig");
 const World = @import("world/world.zig");
 const Camera = @import("camera.zig");
 const Settings = @import("settings.zig").Settings;
@@ -41,6 +44,9 @@ pub fn main(init: std.process.Init) !void {
         return error.SdlInitFailed;
     }
     defer c.SDL_Quit();
+
+    var assets = try Assets.init(init.io, gpa);
+    defer assets.deinit();
 
     const window = c.SDL_CreateWindow(
         "zig-vox-renderer",
@@ -80,17 +86,28 @@ pub fn main(init: std.process.Init) !void {
     var depth = try DepthBuffer.init(device, memory, swapchain.extent);
     defer depth.deinit();
 
-    var voxel = try VoxelPipeline.init(device, memory, swapchain.surface_format.format, DepthBuffer.format, frames_in_flight);
-    defer voxel.deinit();
-
-    var arena = try MeshArena.init(gpa, device, memory, mesh_arena_vertices, frames_in_flight);
-    defer arena.deinit();
-
     const command_pool = try device.createCommandPool(&.{
         .flags = .{ .reset_command_buffer_bit = true },
         .queue_family_index = ctx.graphics_queue_index,
     }, null);
     defer device.destroyCommandPool(command_pool, null);
+
+    var sky_texture = try loadSkybox(&assets, .{
+        .device = device,
+        .memory = memory,
+        .queue = ctx.graphics_queue,
+        .command_pool = command_pool,
+    });
+    defer sky_texture.deinit();
+
+    var voxel = try VoxelPipeline.init(device, memory, &assets, &sky_texture, swapchain.surface_format.format, DepthBuffer.format, frames_in_flight);
+    defer voxel.deinit();
+
+    var sky_pipeline = try SkyPipeline.init(device, &assets, &voxel, swapchain.surface_format.format, DepthBuffer.format);
+    defer sky_pipeline.deinit();
+
+    var arena = try MeshArena.init(gpa, device, memory, mesh_arena_vertices, frames_in_flight);
+    defer arena.deinit();
 
     var frames: [frames_in_flight]Frame = undefined;
     for (&frames) |*frame| {
@@ -266,6 +283,7 @@ pub fn main(init: std.process.Init) !void {
         voxel.bind(cmd, frame_index, swapchain.extent, &arena);
         const frustum: ?math.Frustum = if (settings.frustum_culling) .fromViewProj(view_proj) else null;
         world.draw(cmd, &voxel, camera.position, frustum, world_config);
+        if (settings.skybox) sky_pipeline.draw(cmd, &voxel, frame_index, &camera, settings.fov_deg, aspect);
 
         // dvui draws on top, inside the same rendering scope
         try renderer.beginFrame(cmd, swapchain.extent);
@@ -379,6 +397,20 @@ const Bench = struct {
     }
 };
 
+fn loadSkybox(assets: *const Assets, uploader: Texture.Uploader) !Texture {
+    // Vulkan cube layer order: +X, -X, +Y, -Y, +Z, -Z
+    const names = [6][]const u8{ "right", "left", "top", "bottom", "front", "back" };
+    var faces: [6][]const u8 = undefined;
+    var loaded: usize = 0;
+    defer for (faces[0..loaded]) |face| assets.gpa.free(face);
+    for (names, &faces) |name, *face| {
+        var buf: [64]u8 = undefined;
+        face.* = try assets.read(try std.fmt.bufPrint(&buf, "textures/skybox/{s}.jpg", .{name}));
+        loaded += 1;
+    }
+    return Texture.initCube(uploader, faces);
+}
+
 fn moveCamera(camera: *Camera, settings: *const Settings, dt: f32) void {
     const keys = c.SDL_GetKeyboardState(null);
     var dir: math.Vec3 = .{ 0, 0, 0 };
@@ -403,7 +435,7 @@ fn sceneUniforms(settings: *const Settings, view_proj: math.Mat4) VoxelPipeline.
         .sky_color = linearColor(settings.sky_color, settings.ambient_intensity),
         .ground_color = linearColor(settings.ground_color, settings.ambient_intensity),
         .fog_color = linearColor(settings.sky_color, 1),
-        .params = .{ fog[0], fog[1], if (settings.ao_enabled) settings.ao_strength else 0, 0 },
+        .params = .{ fog[0], fog[1], if (settings.ao_enabled) settings.ao_strength else 0, if (settings.skybox) 1 else 0 },
     };
 }
 
