@@ -1,5 +1,6 @@
-//! Free-fly camera. The position is kept in f64 and everything is rendered
-//! relative to it, so precision holds up far from the origin.
+//! View orientation and position; the position follows the player's eye. It is
+//! kept in f64 and everything is rendered relative to it, so precision holds up
+//! far from the origin.
 
 const std = @import("std");
 const math = @import("math.zig");
@@ -29,12 +30,6 @@ pub fn right(self: Self) Vec3 {
 pub fn look(self: *Self, dx: f32, dy: f32, sensitivity: f32) void {
     self.yaw = @mod(self.yaw + dx * sensitivity, 360);
     self.pitch = std.math.clamp(self.pitch - dy * sensitivity, -89, 89);
-}
-
-/// Moves by `amount` along (right, world up, forward).
-pub fn move(self: *Self, amount: Vec3) void {
-    const delta = math.scale(self.right(), amount[0]) + math.scale(world_up, amount[1]) + math.scale(self.forward(), amount[2]);
-    self.position += @as(@Vector(3, f64), @floatCast(delta));
 }
 
 /// View matrix with the camera at the origin (camera-relative rendering).

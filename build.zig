@@ -69,6 +69,8 @@ pub fn build(b: *std.Build) !void {
     addShader(b, optimize, "src/shaders/voxel.frag");
     addShader(b, optimize, "src/shaders/sky.vert");
     addShader(b, optimize, "src/shaders/sky.frag");
+    addShader(b, optimize, "src/shaders/outline.vert");
+    addShader(b, optimize, "src/shaders/outline.frag");
     b.installDirectory(.{
         .source_dir = b.path("assets/textures"),
         .install_dir = .bin,

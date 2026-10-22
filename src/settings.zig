@@ -6,6 +6,7 @@ pub const Settings = struct {
 
     // camera
     fov_deg: f32 = 70,
+    /// fly mode speed, blocks per second
     move_speed: f32 = 24,
     mouse_sensitivity: f32 = 0.12,
 

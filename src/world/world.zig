@@ -7,6 +7,7 @@ const Allocator = std.mem.Allocator;
 const chunk = @import("chunk.zig");
 const Chunk = chunk.Chunk;
 const ChunkPos = chunk.ChunkPos;
+const BlockId = @import("block.zig").BlockId;
 const mesher = @import("mesher.zig");
 const Terrain = @import("terrain.zig");
 const math = @import("../math.zig");
@@ -67,6 +68,9 @@ padded: *mesher.Padded,
 vertices: std.ArrayList(mesher.Vertex) = .empty,
 scratch_keys: std.ArrayList(ChunkPos) = .empty,
 scratch_columns: std.ArrayList([2]i32) = .empty,
+/// chunks whose blocks were edited (or that border an edit) and need a new mesh;
+/// meshed at the start of the next update regardless of the mesh budget
+dirty: std.ArrayList(ChunkPos) = .empty,
 /// center and config of the previous update; unloading only runs when they change
 last_center: ?ChunkPos = null,
 last_config: ?Config = null,
@@ -93,6 +97,7 @@ pub fn deinit(self: *Self) void {
     self.offsets.deinit(self.allocator);
     self.vertices.deinit(self.allocator);
     self.scratch_keys.deinit(self.allocator);
+    self.dirty.deinit(self.allocator);
     self.allocator.destroy(self.padded);
 }
 
@@ -104,10 +109,61 @@ pub fn regenerate(self: *Self, arena: *MeshArena, seed: u64, frame: u64) !void {
         self.destroyChunk(c.*);
     }
     self.chunks.clearRetainingCapacity();
+    self.dirty.clearRetainingCapacity();
     self.clearHeightmaps();
     self.terrain = .{ .seed = seed };
     self.stats = .{};
     self.settled = false;
+}
+
+/// The block at world position (x, y, z), or null when its chunk isn't loaded.
+pub fn getBlock(self: *const Self, x: i32, y: i32, z: i32) ?BlockId {
+    const c = self.chunks.get(ChunkPos.fromBlock(x, y, z)) orelse return null;
+    const l = local(x, y, z);
+    return c.get(l[0], l[1], l[2]);
+}
+
+/// Whether the block blocks movement. Falls back to the generated terrain where no
+/// chunk is loaded, so the edge of the loaded area is neither a wall nor a pit.
+pub fn isSolid(self: *const Self, x: i32, y: i32, z: i32) bool {
+    const block = self.getBlock(x, y, z) orelse self.terrain.block(x, y, z);
+    return block.isOpaque();
+}
+
+/// Changes one block and queues remeshing of its chunk and of every neighbor whose
+/// one-block border (faces + AO) contains it. Does nothing if the chunk isn't loaded.
+pub fn setBlock(self: *Self, x: i32, y: i32, z: i32, block: BlockId) !void {
+    const pos = ChunkPos.fromBlock(x, y, z);
+    const c = self.chunks.get(pos) orelse return;
+    const l = local(x, y, z);
+    if (c.get(l[0], l[1], l[2]) == block) return;
+    try c.set(self.allocator, l[0], l[1], l[2], block);
+    c.modified = true;
+
+    // per axis: this chunk, plus the neighbor on the side the block touches
+    var ranges: [3][2]i32 = undefined;
+    for (l, &ranges) |v, *range| {
+        range.* = .{ if (v == 0) -1 else 0, if (v == chunk.size - 1) 1 else 0 };
+    }
+    var dy = ranges[1][0];
+    while (dy <= ranges[1][1]) : (dy += 1) {
+        var dz = ranges[2][0];
+        while (dz <= ranges[2][1]) : (dz += 1) {
+            var dx = ranges[0][0];
+            while (dx <= ranges[0][1]) : (dx += 1) {
+                const n_pos = pos.offset(dx, dy, dz);
+                const n = self.chunks.get(n_pos) orelse continue;
+                n.state = .generated;
+                try self.dirty.append(self.allocator, n_pos);
+            }
+        }
+    }
+    self.settled = false;
+}
+
+/// Chunk-local coordinates of a world block.
+fn local(x: i32, y: i32, z: i32) [3]usize {
+    return .{ @intCast(@mod(x, chunk.size)), @intCast(@mod(y, chunk.size)), @intCast(@mod(z, chunk.size)) };
 }
 
 pub fn update(self: *Self, arena: *MeshArena, camera_pos: @Vector(3, f64), config: Config, frame: u64) !void {
@@ -132,6 +188,30 @@ pub fn update(self: *Self, arena: *MeshArena, camera_pos: @Vector(3, f64), confi
     self.stats.loaded = self.chunks.count();
     self.stats.generated_this_frame = 0;
     self.stats.meshed_this_frame = 0;
+
+    // edits first and unbudgeted, so they show up this frame
+    if (self.dirty.items.len > 0) {
+        const t = self.now();
+        var i: usize = 0;
+        while (i < self.dirty.items.len) {
+            const pos = self.dirty.items[i];
+            const in_range = @abs(pos.x - center.x) <= r and @abs(pos.z - center.z) <= r and
+                pos.y >= config.min_y and pos.y <= config.max_y;
+            // out of range: streaming meshes it when it comes back into view
+            const c = (if (in_range) self.chunks.get(pos) else null) orelse {
+                _ = self.dirty.swapRemove(i);
+                continue;
+            };
+            if (!self.neighborsLoaded(pos)) {
+                i += 1;
+                continue;
+            }
+            if (c.state != .meshed) try self.meshChunk(arena, c, frame);
+            _ = self.dirty.swapRemove(i);
+        }
+        mesh_ns += self.since(t);
+    }
+
     if (self.settled) return;
 
     // generate one ring beyond the view distance so edge chunks have neighbors to mesh against
@@ -254,8 +334,15 @@ fn unloadFar(self: *Self, arena: *MeshArena, center: ChunkPos, r: i32, config: C
         if (far or out_of_range) try self.scratch_keys.append(self.allocator, pos);
     }
     for (self.scratch_keys.items) |pos| {
-        const c = self.chunks.fetchRemove(pos).?.value;
+        const c = self.chunks.get(pos).?;
         if (c.mesh) |range| try arena.free(range, frame);
+        c.mesh = null;
+        if (c.modified) {
+            // keep the edited blocks (they can't be regenerated); remesh when back in range
+            c.state = .generated;
+            continue;
+        }
+        _ = self.chunks.remove(pos);
         self.destroyChunk(c);
     }
 

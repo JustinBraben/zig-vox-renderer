@@ -11,9 +11,13 @@ const DepthBuffer = @import("gfx/depth_buffer.zig");
 const MeshArena = @import("gfx/mesh_arena.zig");
 const VoxelPipeline = @import("gfx/voxel_pipeline.zig");
 const SkyPipeline = @import("gfx/sky_pipeline.zig");
+const OutlinePipeline = @import("gfx/outline_pipeline.zig");
 const Texture = @import("gfx/texture.zig");
 const Assets = @import("assets.zig");
 const World = @import("world/world.zig");
+const BlockId = @import("world/block.zig").BlockId;
+const raycast = @import("world/raycast.zig");
+const Player = @import("player.zig");
 const Camera = @import("camera.zig");
 const Settings = @import("settings.zig").Settings;
 const debug_ui = @import("ui/debug_ui.zig");
@@ -25,6 +29,10 @@ const log = std.log.scoped(.app);
 const frames_in_flight = 2;
 /// 16M vertices = 128 MiB of chunk meshes
 const mesh_arena_vertices = 16 * 1024 * 1024;
+/// player physics rate
+const physics_dt = 1.0 / 60.0;
+/// how far away blocks can be broken or placed
+const reach = 5;
 
 const Frame = struct {
     cmd: vk.CommandBuffer,
@@ -106,6 +114,9 @@ pub fn main(init: std.process.Init) !void {
     var sky_pipeline = try SkyPipeline.init(device, &assets, &voxel, swapchain.surface_format.format, DepthBuffer.format);
     defer sky_pipeline.deinit();
 
+    var outline = try OutlinePipeline.init(device, &assets, &voxel, swapchain.surface_format.format, DepthBuffer.format);
+    defer outline.deinit();
+
     var arena = try MeshArena.init(gpa, device, memory, mesh_arena_vertices, frames_in_flight);
     defer arena.deinit();
 
@@ -149,36 +160,63 @@ pub fn main(init: std.process.Init) !void {
     var world = try World.init(gpa, init.io, settings.seed);
     defer world.deinit();
 
-    var camera: Camera = .{};
-    // start above the terrain
-    camera.position[1] = @floatFromInt(world.terrain.height(0, 0) + 40);
+    // stand on the terrain at the origin; the benchmark flies high above it instead
+    const ground: f64 = @floatFromInt(world.terrain.height(0, 0) + 1);
+    var player = Player.init(.{ 0.5, if (bench != null) ground + 40 else ground, 0.5 });
+    if (bench != null) player.setFlying(true);
+    var camera: Camera = .{ .position = player.eye(1) };
+    var physics_time: f64 = 0;
+    // index into `BlockId.placeable`
+    var selected: usize = 0;
+    var target: ?raycast.Hit = null;
 
     // wait for the GPU before any of the deferred destruction above runs
     defer device.deviceWaitIdle() catch {};
 
     var frame_counter: u64 = 0;
     var needs_recreate = false;
-    var looking = false;
+    // mouse captured for playing; released for the UI
+    var captured = false;
+    var break_block = false;
+    var place_block = false;
     var last_frame_ns = backend.nanoTime();
     var frame_ms: f32 = 0;
 
     main_loop: while (true) {
         var event: c.SDL_Event = undefined;
         while (c.SDL_PollEvent(&event)) {
-            const over_ui = try backend.addEvent(&win, event);
+            // while playing, input belongs to the game rather than the UI
+            const over_ui = if (captured) false else try backend.addEvent(&win, event);
             switch (event.type) {
                 c.SDL_EVENT_QUIT => break :main_loop,
                 c.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED => needs_recreate = true,
-                c.SDL_EVENT_MOUSE_BUTTON_DOWN => if (event.button.button == c.SDL_BUTTON_RIGHT and !over_ui) {
-                    looking = true;
-                    _ = c.SDL_SetWindowRelativeMouseMode(window, true);
+                c.SDL_EVENT_WINDOW_FOCUS_LOST => captured = setCaptured(window, false),
+                c.SDL_EVENT_MOUSE_BUTTON_DOWN => {
+                    if (!captured) {
+                        if (!over_ui) captured = setCaptured(window, true);
+                    } else if (event.button.button == c.SDL_BUTTON_LEFT) {
+                        break_block = true;
+                    } else if (event.button.button == c.SDL_BUTTON_RIGHT) {
+                        place_block = true;
+                    }
                 },
-                c.SDL_EVENT_MOUSE_BUTTON_UP => if (event.button.button == c.SDL_BUTTON_RIGHT and looking) {
-                    looking = false;
-                    _ = c.SDL_SetWindowRelativeMouseMode(window, false);
-                },
-                c.SDL_EVENT_MOUSE_MOTION => if (looking) {
+                c.SDL_EVENT_MOUSE_MOTION => if (captured) {
                     camera.look(event.motion.xrel, event.motion.yrel, settings.mouse_sensitivity);
+                },
+                c.SDL_EVENT_MOUSE_WHEEL => if (captured and event.wheel.y != 0) {
+                    const n = BlockId.placeable.len;
+                    selected = if (event.wheel.y < 0) (selected + 1) % n else (selected + n - 1) % n;
+                },
+                c.SDL_EVENT_KEY_DOWN => if (captured and !event.key.repeat) {
+                    const sc = event.key.scancode;
+                    if (sc == c.SDL_SCANCODE_ESCAPE) {
+                        captured = setCaptured(window, false);
+                    } else if (sc == c.SDL_SCANCODE_F) {
+                        player.setFlying(!player.flying);
+                    } else if (sc >= c.SDL_SCANCODE_1 and sc <= c.SDL_SCANCODE_9) {
+                        const i: usize = @intCast(sc - c.SDL_SCANCODE_1);
+                        if (i < BlockId.placeable.len) selected = i;
+                    }
                 },
                 else => {},
             }
@@ -230,8 +268,28 @@ pub fn main(init: std.process.Init) !void {
         frame_ms = if (frame_ms == 0) dt_ms else frame_ms * 0.95 + dt_ms * 0.05;
         last_frame_ns = now_ns;
 
-        // camera + world
-        if (looking) moveCamera(&camera, &settings, @min(dt_ms, 100) / 1000);
+        // player physics at a fixed rate; the camera interpolates between the last two steps
+        const input: Player.Input = if (captured) playerInput(&settings) else .{ .fly_speed = settings.move_speed };
+        physics_time += @min(dt_ms / 1000, 0.25);
+        while (physics_time >= physics_dt) : (physics_time -= physics_dt) {
+            player.step(&world, input, camera.yaw, camera.pitch, physics_dt);
+        }
+        camera.position = player.eye(physics_time / physics_dt);
+
+        // block interaction
+        target = raycast.cast(&world, camera.position, camera.forward(), reach);
+        if (target) |hit| {
+            if (break_block) {
+                try world.setBlock(hit.block[0], hit.block[1], hit.block[2], .air);
+            } else if (place_block and !std.meta.eql(hit.normal, .{ 0, 0, 0 })) {
+                const p = hit.adjacent();
+                if (!player.intersectsBlock(p[0], p[1], p[2])) try world.setBlock(p[0], p[1], p[2], BlockId.placeable[selected]);
+            }
+            if (break_block or place_block) target = raycast.cast(&world, camera.position, camera.forward(), reach);
+        }
+        break_block = false;
+        place_block = false;
+
         const world_config: World.Config = .{
             .render_distance = settings.render_distance,
             .min_y = settings.min_chunk_y,
@@ -284,16 +342,25 @@ pub fn main(init: std.process.Init) !void {
         const frustum: ?math.Frustum = if (settings.frustum_culling) .fromViewProj(view_proj) else null;
         world.draw(cmd, &voxel, camera.position, frustum, world_config);
         if (settings.skybox) sky_pipeline.draw(cmd, &voxel, frame_index, &camera, settings.fov_deg, aspect);
+        outline.bind(cmd, &voxel, frame_index);
+        if (target) |hit| {
+            const corner: @Vector(3, f64) = .{ @floatFromInt(hit.block[0]), @floatFromInt(hit.block[1]), @floatFromInt(hit.block[2]) };
+            const rel: math.Vec3 = @floatCast(corner - camera.position);
+            outline.drawBlock(cmd, rel);
+        }
+        if (captured) outline.drawCrosshair(cmd, swapchain.extent);
 
         // dvui draws on top, inside the same rendering scope
         try renderer.beginFrame(cmd, swapchain.extent);
         try win.begin(backend.nanoTime());
-        const actions = debug_ui.draw(&settings, .{
+        const actions = debug_ui.draw(&settings, &player, .{
             .frame_ms = frame_ms,
             .camera = &camera,
             .world = world.stats,
             .arena_used = arena.used,
             .arena_capacity = arena.capacity,
+            .target = target,
+            .selected = BlockId.placeable[selected],
         });
         _ = try win.end(.{});
         const recorded = try renderer.endFrame();
@@ -411,18 +478,24 @@ fn loadSkybox(assets: *const Assets, uploader: Texture.Uploader) !Texture {
     return Texture.initCube(uploader, faces);
 }
 
-fn moveCamera(camera: *Camera, settings: *const Settings, dt: f32) void {
+fn playerInput(settings: *const Settings) Player.Input {
     const keys = c.SDL_GetKeyboardState(null);
-    var dir: math.Vec3 = .{ 0, 0, 0 };
-    if (keys[c.SDL_SCANCODE_D]) dir[0] += 1;
-    if (keys[c.SDL_SCANCODE_A]) dir[0] -= 1;
-    if (keys[c.SDL_SCANCODE_SPACE]) dir[1] += 1;
-    if (keys[c.SDL_SCANCODE_LCTRL]) dir[1] -= 1;
-    if (keys[c.SDL_SCANCODE_W]) dir[2] += 1;
-    if (keys[c.SDL_SCANCODE_S]) dir[2] -= 1;
-    if (math.length(dir) == 0) return;
-    const speed = settings.move_speed * @as(f32, if (keys[c.SDL_SCANCODE_LSHIFT]) 4 else 1);
-    camera.move(math.scale(math.normalize(dir), speed * dt));
+    var input: Player.Input = .{ .fly_speed = settings.move_speed };
+    if (keys[c.SDL_SCANCODE_D]) input.right += 1;
+    if (keys[c.SDL_SCANCODE_A]) input.right -= 1;
+    if (keys[c.SDL_SCANCODE_W]) input.forward += 1;
+    if (keys[c.SDL_SCANCODE_S]) input.forward -= 1;
+    if (keys[c.SDL_SCANCODE_SPACE]) input.up += 1;
+    if (keys[c.SDL_SCANCODE_LCTRL]) input.up -= 1;
+    input.jump = keys[c.SDL_SCANCODE_SPACE];
+    input.sprint = keys[c.SDL_SCANCODE_LSHIFT];
+    return input;
+}
+
+/// Captures or releases the mouse; returns the new state.
+fn setCaptured(window: *c.SDL_Window, capture: bool) bool {
+    _ = c.SDL_SetWindowRelativeMouseMode(window, capture);
+    return capture;
 }
 
 fn sceneUniforms(settings: *const Settings, view_proj: math.Mat4) VoxelPipeline.Scene {

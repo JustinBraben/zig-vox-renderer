@@ -58,10 +58,25 @@ pub const Chunk = struct {
     /// bit per side (+X, -X, +Y, -Y, +Z, -Z, as in the mesher), set when that
     /// whole boundary layer is opaque; see `updateSolidSides`
     solid_sides: u6 = 0,
+    /// edited since generation; kept loaded so the edits aren't lost
+    modified: bool = false,
 
     pub fn get(self: *const Chunk, x: usize, y: usize, z: usize) BlockId {
         const blocks = self.blocks orelse return self.uniform;
         return blocks[index(x, y, z)];
+    }
+
+    /// Writes one block, promoting a uniform chunk to per-block storage when needed.
+    pub fn set(self: *Chunk, allocator: std.mem.Allocator, x: usize, y: usize, z: usize, block: BlockId) !void {
+        const blocks = self.blocks orelse blk: {
+            if (block == self.uniform) return;
+            const blocks = try allocator.create(Blocks);
+            @memset(blocks, self.uniform);
+            self.blocks = blocks;
+            break :blk blocks;
+        };
+        blocks[index(x, y, z)] = block;
+        self.updateSolidSides();
     }
 
     pub fn isSolid(self: *const Chunk) bool {
@@ -117,6 +132,23 @@ test "solid sides of a half-filled chunk" {
     c.uniform = .stone;
     c.updateSolidSides();
     try std.testing.expectEqual(@as(u6, 0b111111), c.solid_sides);
+}
+
+test "set promotes a uniform chunk" {
+    var c: Chunk = .{ .pos = .{ .x = 0, .y = 0, .z = 0 }, .uniform = .stone };
+    c.updateSolidSides();
+    defer if (c.blocks) |blocks| std.testing.allocator.destroy(blocks);
+
+    // writing the uniform block keeps the compact form
+    try c.set(std.testing.allocator, 1, 2, 3, .stone);
+    try std.testing.expect(c.blocks == null);
+
+    try c.set(std.testing.allocator, 0, 5, 7, .air);
+    try std.testing.expect(c.blocks != null);
+    try std.testing.expectEqual(BlockId.air, c.get(0, 5, 7));
+    try std.testing.expectEqual(BlockId.stone, c.get(0, 5, 8));
+    // the -X layer (bit 1) now has a hole
+    try std.testing.expectEqual(@as(u6, 0b111101), c.solid_sides);
 }
 
 test "chunk pos from negative blocks" {

@@ -7,6 +7,9 @@ const Settings = @import("../settings.zig").Settings;
 const Camera = @import("../camera.zig");
 const World = @import("../world/world.zig");
 const ChunkPos = @import("../world/chunk.zig").ChunkPos;
+const BlockId = @import("../world/block.zig").BlockId;
+const raycast = @import("../world/raycast.zig");
+const Player = @import("../player.zig");
 
 pub const Stats = struct {
     frame_ms: f32,
@@ -14,13 +17,16 @@ pub const Stats = struct {
     world: World.Stats,
     arena_used: u32,
     arena_capacity: u32,
+    /// block under the crosshair
+    target: ?raycast.Hit,
+    selected: BlockId,
 };
 
 pub const Actions = struct {
     regenerate: bool = false,
 };
 
-pub fn draw(settings: *Settings, stats: Stats) Actions {
+pub fn draw(settings: *Settings, player: *Player, stats: Stats) Actions {
     var actions: Actions = .{};
 
     var float = dvui.floatingWindow(@src(), .{}, .{
@@ -58,12 +64,31 @@ pub fn draw(settings: *Settings, stats: Stats) Actions {
         _ = dvui.checkbox(@src(), &settings.show_demo, "dvui demo window", .{});
     }
 
+    if (dvui.expander(@src(), "Player", .{ .default_expanded = true }, .{ .expand = .horizontal })) {
+        var section = dvui.box(@src(), .{}, .{ .expand = .horizontal, .margin = .{ .x = 12 } });
+        defer section.deinit();
+        dvui.labelNoFmt(@src(), "Click the world to play, Esc to release the mouse", .{}, .{});
+        dvui.labelNoFmt(@src(), "WASD: move, Space: jump / up, Ctrl: down, Shift: sprint", .{}, .{});
+        dvui.labelNoFmt(@src(), "LMB: break, RMB: place, wheel / 1-9: block, F: fly", .{}, .{});
+        const p = player.position;
+        const v = player.velocity;
+        dvui.label(@src(), "feet {d:.2} {d:.2} {d:.2}", .{ p[0], p[1], p[2] }, .{});
+        dvui.label(@src(), "velocity {d:.2} {d:.2} {d:.2}{s}", .{ v[0], v[1], v[2], if (player.on_ground) " (on ground)" else "" }, .{});
+        dvui.label(@src(), "selected: {s}", .{@tagName(stats.selected)}, .{});
+        if (stats.target) |t| {
+            dvui.label(@src(), "target: {s} at {d} {d} {d}, face {d} {d} {d}", .{ @tagName(t.id), t.block[0], t.block[1], t.block[2], t.normal[0], t.normal[1], t.normal[2] }, .{});
+        } else {
+            dvui.labelNoFmt(@src(), "target: none", .{}, .{});
+        }
+        var flying = player.flying;
+        if (dvui.checkbox(@src(), &flying, "Fly (F)", .{})) player.setFlying(flying);
+    }
+
     if (dvui.expander(@src(), "Camera", .{}, .{ .expand = .horizontal })) {
         var section = dvui.box(@src(), .{}, .{ .expand = .horizontal, .margin = .{ .x = 12 } });
         defer section.deinit();
-        dvui.labelNoFmt(@src(), "Hold right mouse: look, WASD / Space / Ctrl: move, Shift: fast", .{}, .{});
         _ = dvui.sliderEntry(@src(), "FOV: {d:0.0}", .{ .value = &settings.fov_deg, .min = 30, .max = 120, .interval = 1 }, .{ .expand = .horizontal });
-        _ = dvui.sliderEntry(@src(), "Speed: {d:0.0}", .{ .value = &settings.move_speed, .min = 1, .max = 200, .interval = 1 }, .{ .expand = .horizontal });
+        _ = dvui.sliderEntry(@src(), "Fly speed: {d:0.0}", .{ .value = &settings.move_speed, .min = 1, .max = 200, .interval = 1 }, .{ .expand = .horizontal });
         _ = dvui.sliderEntry(@src(), "Mouse: {d:0.02}", .{ .value = &settings.mouse_sensitivity, .min = 0.01, .max = 0.5, .interval = 0.01 }, .{ .expand = .horizontal });
     }
 

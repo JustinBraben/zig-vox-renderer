@@ -17,6 +17,14 @@ pub const BlockId = enum(u8) {
     planks,
     _,
 
+    /// Every named block except air, in declaration order (the player's block palette).
+    pub const placeable = blk: {
+        const fields = @typeInfo(BlockId).@"enum".fields;
+        var list: [fields.len - 1]BlockId = undefined;
+        for (fields[1..], &list) |field, *block| block.* = @enumFromInt(field.value);
+        break :blk list;
+    };
+
     pub fn isOpaque(self: BlockId) bool {
         return self != .air;
     }
