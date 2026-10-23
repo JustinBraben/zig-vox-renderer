@@ -1,0 +1,28 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build (Debug)",
+            "type": "shell",
+            "command": "zig",
+            "args": [
+                "build",
+                "-Doptimize=Debug"
+            ],
+            "problemMatcher": [],
+            "group": "build"
+        },
+        {
+            "label": "build_test",
+            "type": "shell",
+            "command": "zig",
+            "args": [
+                "build",
+                "install",
+                "--summary",
+                "all"
+            ],
+            "group": "test"
+        }
+    ]
+}

@@ -1,0 +1,26 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "zig_vox_renderer (Debug)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/zig-out/bin/zig_vox_renderer",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/zig-out/bin",
+            "environment": [],
+            "preLaunchTask": "build (Debug)",
+            "osx": {
+                "MIMode": "lldb"
+            },
+            "windows": {
+                "type": "cppvsdbg",
+                "console": "integratedTerminal"
+            }
+        },
+    ]
+}
