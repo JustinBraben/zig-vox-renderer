@@ -34,7 +34,7 @@ pub const Scene = extern struct {
 };
 
 pub const PushConstants = extern struct {
-    /// chunk origin relative to the camera
+    /// xyz: mesh origin relative to the camera, w: size of a mesh unit in blocks
     origin: [4]f32,
 };
 
@@ -175,8 +175,9 @@ pub fn bind(self: *const Self, cmd: vk.CommandBuffer, frame: usize, extent: vk.E
     device.cmdBindIndexBuffer(cmd, arena.indices.handle, 0, .uint32);
 }
 
-pub fn drawChunk(self: *const Self, cmd: vk.CommandBuffer, origin: math.Vec3, range: MeshArena.Range) void {
-    const push: PushConstants = .{ .origin = .{ origin[0], origin[1], origin[2], 0 } };
+/// `scale` is the size of a mesh unit in blocks: 1 for chunks, larger for distant terrain tiles.
+pub fn drawChunk(self: *const Self, cmd: vk.CommandBuffer, origin: math.Vec3, range: MeshArena.Range, scale: f32) void {
+    const push: PushConstants = .{ .origin = .{ origin[0], origin[1], origin[2], scale } };
     self.device.cmdPushConstants(cmd, self.layout, .{ .vertex_bit = true }, 0, @sizeOf(PushConstants), &push);
     self.device.cmdDrawIndexed(cmd, range.count / 4 * 6, 1, 0, @intCast(range.first), 0);
 }

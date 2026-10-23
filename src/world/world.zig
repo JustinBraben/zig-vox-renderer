@@ -29,6 +29,9 @@ pub const Config = struct {
     mesh_budget: u32,
 };
 
+/// A set of chunk columns (x, z).
+pub const ColumnSet = std.AutoHashMapUnmanaged([2]i32, void);
+
 pub const Stats = struct {
     loaded: u32 = 0,
     /// chunks with a non-empty mesh
@@ -264,8 +267,20 @@ pub fn update(self: *Self, arena: *MeshArena, camera_pos: @Vector(3, f64), confi
     self.stats.mesh_total_ns += mesh_ns;
 }
 
-/// Records draws for every meshed chunk in view. Expects `pipeline.bind` to have been called.
-pub fn draw(self: *Self, cmd: vk.CommandBuffer, pipeline: *const VoxelPipeline, camera_pos: @Vector(3, f64), frustum: ?math.Frustum, config: Config) void {
+/// Whether every chunk of column (x, z) in the configured y range has a mesh
+/// (possibly empty, possibly being rebuilt), so the column can be drawn without holes.
+pub fn columnReady(self: *const Self, x: i32, z: i32, config: Config) bool {
+    var y = config.min_y;
+    while (y <= config.max_y) : (y += 1) {
+        const c = self.chunks.get(.{ .x = x, .y = y, .z = z }) orelse return false;
+        if (c.state != .meshed and c.mesh == null) return false;
+    }
+    return true;
+}
+
+/// Records draws for every meshed chunk in view, limited to `columns` when given
+/// (the rest is covered by distant terrain). Expects `pipeline.bind` to have been called.
+pub fn draw(self: *Self, cmd: vk.CommandBuffer, pipeline: *const VoxelPipeline, camera_pos: @Vector(3, f64), frustum: ?math.Frustum, config: Config, columns: ?*const ColumnSet) void {
     const start = self.now();
     const center = ChunkPos.fromWorld(camera_pos);
     const r = @max(config.render_distance, 0);
@@ -280,12 +295,13 @@ pub fn draw(self: *Self, cmd: vk.CommandBuffer, pipeline: *const VoxelPipeline, 
         meshed += 1;
         if (@abs(c.pos.x - center.x) > r or @abs(c.pos.z - center.z) > r) continue;
         if (c.pos.y < config.min_y or c.pos.y > config.max_y) continue;
+        if (columns) |set| if (!set.contains(.{ c.pos.x, c.pos.z })) continue;
 
         const origin: math.Vec3 = @floatCast(c.pos.origin() - camera_pos);
         if (frustum) |f| {
             if (!f.intersectsAabb(origin, origin + @as(math.Vec3, @splat(chunk.size)))) continue;
         }
-        pipeline.drawChunk(cmd, origin, range);
+        pipeline.drawChunk(cmd, origin, range, 1);
         drawn += 1;
         vertices += range.count;
     }

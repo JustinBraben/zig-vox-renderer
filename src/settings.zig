@@ -37,11 +37,29 @@ pub const Settings = struct {
     mesh_budget: i32 = 8,
     frustum_culling: bool = true,
 
+    // distant terrain
+    lod_enabled: bool = true,
+    /// coarsest level; a level-k cell is 2^k blocks wide
+    lod_levels: i32 = 6,
+    /// root tiles in each direction around the camera
+    lod_root_radius: i32 = 3,
+    /// tiles split when closer than this many of their own widths
+    lod_split_dist: i32 = 3,
+    lod_budget: i32 = 8,
+
+    /// guaranteed view distance in blocks: the voxel chunks, or the distant terrain when enabled
+    pub fn viewDistance(self: *const Settings) f32 {
+        const chunks: f32 = @floatFromInt(self.render_distance * 32);
+        if (!self.lod_enabled) return chunks;
+        const lod: f32 = @floatFromInt(self.lod_root_radius * (@as(i32, 32) << @intCast(self.lod_levels)));
+        return @max(chunks, lod);
+    }
+
     /// fog (start, end) in blocks, or null when disabled
     pub fn fogRange(self: *const Settings) ?[2]f32 {
         if (!self.fog_enabled) return null;
         if (self.fog_auto) {
-            const end: f32 = @floatFromInt(self.render_distance * 32);
+            const end = self.viewDistance();
             return .{ end * 0.45, end - 8 };
         }
         return .{ self.fog_start, @max(self.fog_end, self.fog_start + 1) };

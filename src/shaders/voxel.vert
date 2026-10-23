@@ -17,7 +17,7 @@ layout(set = 0, binding = 0) uniform Scene {
 } scene;
 
 layout(push_constant) uniform Push {
-    vec4 origin; // chunk origin relative to the camera
+    vec4 origin; // xyz: mesh origin relative to the camera, w: size of a mesh unit in blocks
 } pc;
 
 layout(location = 0) out vec3 v_rel_pos;
@@ -39,7 +39,7 @@ void main() {
     uint face = (in_data >> 18) & 7u;
     uint ao = (in_data >> 21) & 3u;
 
-    vec3 rel = pc.origin.xyz + local;
+    vec3 rel = pc.origin.xyz + local * pc.origin.w;
     gl_Position = scene.view_proj * vec4(rel, 1.0);
 
     v_rel_pos = rel;

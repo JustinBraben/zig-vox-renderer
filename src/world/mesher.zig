@@ -36,13 +36,13 @@ pub const Vertex = extern struct {
 /// Face order matches the normal table in voxel.vert: +X, -X, +Y, -Y, +Z, -Z.
 /// `u` and `v` span the face with cross(u, v) = normal, so corners
 /// base, base+u, base+u+v, base+v are counter-clockwise seen from outside.
-const Face = struct {
+pub const Face = struct {
     normal: [3]i32,
     u: [3]i32,
     v: [3]i32,
 };
 
-const faces = [6]Face{
+pub const faces = [6]Face{
     .{ .normal = .{ 1, 0, 0 }, .u = .{ 0, 1, 0 }, .v = .{ 0, 0, 1 } },
     .{ .normal = .{ -1, 0, 0 }, .u = .{ 0, 0, 1 }, .v = .{ 0, 1, 0 } },
     .{ .normal = .{ 0, 1, 0 }, .u = .{ 0, 0, 1 }, .v = .{ 1, 0, 0 } },
@@ -51,7 +51,7 @@ const faces = [6]Face{
     .{ .normal = .{ 0, 0, -1 }, .u = .{ 0, 1, 0 }, .v = .{ 1, 0, 0 } },
 };
 
-const corner_uv = [4][2]i32{ .{ 0, 0 }, .{ 1, 0 }, .{ 1, 1 }, .{ 0, 1 } };
+pub const corner_uv = [4][2]i32{ .{ 0, 0 }, .{ 1, 0 }, .{ 1, 1 }, .{ 0, 1 } };
 
 /// Per-face lookups for the mesher, precomputed so the inner loop is just
 /// index arithmetic. All offsets are relative to the padded index of the

@@ -6,6 +6,7 @@ const dvui = @import("dvui");
 const Settings = @import("../settings.zig").Settings;
 const Camera = @import("../camera.zig");
 const World = @import("../world/world.zig");
+const Lod = @import("../world/lod.zig");
 const ChunkPos = @import("../world/chunk.zig").ChunkPos;
 const BlockId = @import("../world/block.zig").BlockId;
 const raycast = @import("../world/raycast.zig");
@@ -15,6 +16,7 @@ pub const Stats = struct {
     frame_ms: f32,
     camera: *const Camera,
     world: World.Stats,
+    lod: Lod.Stats,
     arena_used: u32,
     arena_capacity: u32,
     /// block under the crosshair
@@ -59,7 +61,11 @@ pub fn draw(settings: *Settings, player: *Player, stats: Stats) Actions {
         dvui.label(@src(), "avg: gen {d:.0} us/chunk, mesh {d:.0} us/chunk", .{ perChunkUs(w.gen_total_ns, w.gen_total), perChunkUs(w.mesh_total_ns, w.mesh_total) }, .{});
         const used_mib = @as(f64, @floatFromInt(stats.arena_used)) * 8 / (1 << 20);
         const cap_mib = @as(f64, @floatFromInt(stats.arena_capacity)) * 8 / (1 << 20);
-        dvui.label(@src(), "mesh arena: {d:.1} / {d:.0} MiB{s}", .{ used_mib, cap_mib, if (w.arena_full) " (FULL)" else "" }, .{});
+        const l = stats.lod;
+        dvui.label(@src(), "far tiles: {d} built, {d} leaves, {d} drawn, {d} pending", .{ l.tiles, l.leaves, l.drawn, l.pending }, .{});
+        dvui.label(@src(), "far vertices: {d:.2} M, cpu: update {d:.2} ms, draw {d:.2} ms", .{ @as(f64, @floatFromInt(l.drawn_vertices)) / 1e6, l.update_ms, l.draw_ms }, .{});
+        const full = w.arena_full or l.arena_full;
+        dvui.label(@src(), "mesh arena: {d:.1} / {d:.0} MiB{s}", .{ used_mib, cap_mib, if (full) " (FULL)" else "" }, .{});
         _ = dvui.checkbox(@src(), &settings.vsync, "VSync", .{});
         _ = dvui.checkbox(@src(), &settings.show_demo, "dvui demo window", .{});
     }
@@ -117,7 +123,7 @@ pub fn draw(settings: *Settings, player: *Player, stats: Stats) Actions {
 
         heading(@src(), "Fog");
         _ = dvui.checkbox(@src(), &settings.fog_enabled, "Enabled", .{});
-        _ = dvui.checkbox(@src(), &settings.fog_auto, "Follow render distance", .{});
+        _ = dvui.checkbox(@src(), &settings.fog_auto, "Follow view distance", .{});
         if (!settings.fog_auto) {
             _ = dvui.sliderEntry(@src(), "Start: {d:0.0}", .{ .value = &settings.fog_start, .min = 0, .max = 1024, .interval = 1 }, .{ .expand = .horizontal });
             _ = dvui.sliderEntry(@src(), "End: {d:0.0}", .{ .value = &settings.fog_end, .min = 0, .max = 1024, .interval = 1 }, .{ .expand = .horizontal });
@@ -133,6 +139,14 @@ pub fn draw(settings: *Settings, player: *Player, stats: Stats) Actions {
         intSlider(@src(), "Gen / frame: {d:0.0}", &settings.gen_budget, 1, 128);
         intSlider(@src(), "Mesh / frame: {d:0.0}", &settings.mesh_budget, 1, 64);
         _ = dvui.checkbox(@src(), &settings.frustum_culling, "Frustum culling", .{});
+
+        heading(@src(), "Distant terrain");
+        _ = dvui.checkbox(@src(), &settings.lod_enabled, "Enabled", .{});
+        intSlider(@src(), "Levels: {d:0.0}", &settings.lod_levels, 1, 8);
+        intSlider(@src(), "Root radius: {d:0.0}", &settings.lod_root_radius, 1, 8);
+        intSlider(@src(), "Split distance: {d:0.0}", &settings.lod_split_dist, 1, 6);
+        intSlider(@src(), "Tiles / frame: {d:0.0}", &settings.lod_budget, 1, 64);
+        dvui.label(@src(), "view distance: {d:.0} blocks", .{settings.viewDistance()}, .{});
 
         {
             var row = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });

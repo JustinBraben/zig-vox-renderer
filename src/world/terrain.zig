@@ -78,6 +78,11 @@ pub fn block(self: Self, x: i32, y: i32, z: i32) BlockId {
     return blockAt(y, self.height(x, z));
 }
 
+/// The top block of a column whose surface height is `surface`.
+pub fn surfaceBlock(surface: i32) BlockId {
+    return blockAt(surface, surface);
+}
+
 const stone_depth = 6;
 
 fn blockAt(y: i32, surface: i32) BlockId {

@@ -15,6 +15,7 @@ const OutlinePipeline = @import("gfx/outline_pipeline.zig");
 const Texture = @import("gfx/texture.zig");
 const Assets = @import("assets.zig");
 const World = @import("world/world.zig");
+const Lod = @import("world/lod.zig");
 const BlockId = @import("world/block.zig").BlockId;
 const raycast = @import("world/raycast.zig");
 const Player = @import("player.zig");
@@ -162,6 +163,8 @@ pub fn main(init: std.process.Init) !void {
 
     var world = try World.init(gpa, init.io, settings.seed);
     defer world.deinit();
+    var lod = Lod.init(gpa, init.io);
+    defer lod.deinit();
 
     // stand on the terrain at the origin; the benchmark flies high above it instead
     const ground: f64 = @floatFromInt(world.terrain.height(0, 0) + 1);
@@ -301,6 +304,16 @@ pub fn main(init: std.process.Init) !void {
             .mesh_budget = @intCast(settings.mesh_budget),
         };
         try world.update(&arena, camera.position, world_config, frame_counter);
+        if (settings.lod_enabled) {
+            try lod.update(&arena, &world, camera.position, world_config, .{
+                .max_level = @intCast(settings.lod_levels),
+                .root_radius = settings.lod_root_radius,
+                .split_dist = settings.lod_split_dist,
+                .build_budget = @intCast(settings.lod_budget),
+            }, frame_counter);
+        } else if (lod.tiles.count() > 0) {
+            try lod.clear(&arena, frame_counter);
+        }
 
         const aspect = @as(f32, @floatFromInt(swapchain.extent.width)) / @as(f32, @floatFromInt(swapchain.extent.height));
         const view_proj = Camera.projection(settings.fov_deg, aspect).mul(camera.view());
@@ -343,7 +356,9 @@ pub fn main(init: std.process.Init) !void {
 
         voxel.bind(cmd, frame_index, swapchain.extent, &arena);
         const frustum: ?math.Frustum = if (settings.frustum_culling) .fromViewProj(view_proj) else null;
-        world.draw(cmd, &voxel, camera.position, frustum, world_config);
+        // near to far, so the chunks fill the depth buffer before the distant terrain
+        world.draw(cmd, &voxel, camera.position, frustum, world_config, if (settings.lod_enabled) &lod.columns else null);
+        if (settings.lod_enabled) lod.draw(cmd, &voxel, camera.position, frustum);
         if (settings.skybox) sky_pipeline.draw(cmd, &voxel, frame_index, &camera, settings.fov_deg, aspect);
         outline.bind(cmd, &voxel, frame_index);
         if (target) |hit| {
@@ -360,6 +375,7 @@ pub fn main(init: std.process.Init) !void {
             .frame_ms = frame_ms,
             .camera = &camera,
             .world = world.stats,
+            .lod = lod.stats,
             .arena_used = arena.used,
             .arena_capacity = arena.capacity,
             .target = target,
@@ -414,8 +430,11 @@ pub fn main(init: std.process.Init) !void {
         };
         if (present_result != .success) needs_recreate = true;
 
-        if (actions.regenerate) try world.regenerate(&arena, settings.seed, frame_counter);
-        if (bench) |*b| if (b.frame(&world.stats, dt_ms, now_ns)) break :main_loop;
+        if (actions.regenerate) {
+            try world.regenerate(&arena, settings.seed, frame_counter);
+            try lod.clear(&arena, frame_counter);
+        }
+        if (bench) |*b| if (b.frame(&world.stats, &lod.stats, dt_ms, now_ns)) break :main_loop;
 
         frame_counter += 1;
     }
@@ -476,26 +495,29 @@ const Bench = struct {
     draw_ms: f64 = 0,
 
     /// Returns true once the benchmark is done.
-    fn frame(self: *Bench, stats: *const World.Stats, dt_ms: f32, now_ns: i128) bool {
+    fn frame(self: *Bench, stats: *const World.Stats, lod: *const Lod.Stats, dt_ms: f32, now_ns: i128) bool {
         const start = self.load_start_ns orelse {
             self.load_start_ns = now_ns;
             return false;
         };
         if (self.frames == 0 and self.load_ms == 0) {
-            const loading = stats.pending > 0 or stats.generated_this_frame > 0 or stats.meshed_this_frame > 0;
+            const loading = stats.pending > 0 or stats.generated_this_frame > 0 or stats.meshed_this_frame > 0 or lod.pending > 0 or lod.built_this_frame > 0;
             if (loading) return false;
             self.load_ms = @as(f64, @floatFromInt(now_ns - start)) / std.time.ns_per_ms;
             return false;
         }
         self.frames += 1;
         self.frame_ms += dt_ms;
-        self.update_ms += stats.update_ms;
-        self.draw_ms += stats.draw_ms;
+        self.update_ms += stats.update_ms + lod.update_ms;
+        self.draw_ms += stats.draw_ms + lod.draw_ms;
         if (self.frames < steady_frames) return false;
 
         const n: f64 = steady_frames;
         std.debug.print("bench: loaded {d} chunks ({d} meshed, {d} drawn, {d:.2} M vertices) in {d:.0} ms\n", .{
             stats.loaded, stats.meshed, stats.drawn, @as(f64, @floatFromInt(stats.drawn_vertices)) / 1e6, self.load_ms,
+        });
+        std.debug.print("bench: distant terrain {d} tiles ({d} leaves, {d} drawn, {d:.2} M vertices)\n", .{
+            lod.tiles, lod.leaves, lod.drawn, @as(f64, @floatFromInt(lod.drawn_vertices)) / 1e6,
         });
         const gen_us = debug_ui.perChunkUs(stats.gen_total_ns, stats.gen_total);
         const mesh_us = debug_ui.perChunkUs(stats.mesh_total_ns, stats.mesh_total);

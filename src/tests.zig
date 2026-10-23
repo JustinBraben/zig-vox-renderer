@@ -7,4 +7,5 @@ test {
     _ = @import("world/terrain.zig");
     _ = @import("world/mesher.zig");
     _ = @import("world/raycast.zig");
+    _ = @import("world/lod.zig");
 }
