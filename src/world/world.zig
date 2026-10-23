@@ -404,7 +404,7 @@ fn generateChunk(self: *Self, pos: ChunkPos) !void {
         },
         .mixed => {
             const blocks = try self.allocator.create(chunk.Blocks);
-            Terrain.fill(pos.y, map, blocks);
+            self.terrain.fill(pos.y, map, blocks);
             c.blocks = blocks;
         },
     }

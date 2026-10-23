@@ -297,6 +297,11 @@ pub const Surface = [chunk.size][chunk.size]BlockId;
 const skirt = 2;
 /// Steeper drops than this (in blocks) show stone instead of the surface block.
 const cliff_blocks = 4;
+/// Forest cover (see `Terrain.forestCover`) above which a cell shows tree canopy.
+const forest_cover = 0.5;
+/// How far the canopy sits above the ground, in blocks; within `cliff_blocks`
+/// so forest edges show leaves rather than stone.
+const canopy_blocks = 4;
 
 /// Vertical span of a tile mesh, in cells: vertex y is relative to `base`.
 pub const Extent = struct {
@@ -313,11 +318,17 @@ pub fn sample(terrain: *const Terrain, key: Key, cells: *Grid, blocks: *Surface)
         for (row, 0..) |*cell, gx| {
             const bx = x0 + (@as(i32, @intCast(gx)) - 1) * scale + @divFloor(scale, 2);
             const bz = z0 + (@as(i32, @intCast(gz)) - 1) * scale + @divFloor(scale, 2);
-            const h = terrain.height(bx, bz);
+            var h = terrain.height(bx, bz);
+            var surface = Terrain.surfaceBlock(h);
+            // dense forest reads as a raised canopy instead of the grass under it
+            if (surface == .grass and terrain.forestCover(bx, bz) > forest_cover) {
+                h += canopy_blocks;
+                surface = .leaves;
+            }
             // top of the surface block, rounded to whole cells
             cell.* = @divFloor(h + 1 + @divFloor(scale, 2), scale);
             const interior = gx >= 1 and gx <= chunk.size and gz >= 1 and gz <= chunk.size;
-            if (interior) blocks[gz - 1][gx - 1] = Terrain.surfaceBlock(h);
+            if (interior) blocks[gz - 1][gx - 1] = surface;
         }
     }
 }
