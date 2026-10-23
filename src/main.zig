@@ -48,7 +48,7 @@ pub fn main(init: std.process.Init) !void {
     }
     const gpa = init.gpa;
 
-    if (!c.SDL_Init(c.SDL_INIT_VIDEO)) {
+    if (!c.SDL_Init(c.SDL_INIT_VIDEO | c.SDL_INIT_AUDIO)) {
         log.err("SDL_Init failed: {s}", .{c.SDL_GetError()});
         return error.SdlInitFailed;
     }
@@ -72,6 +72,31 @@ pub fn main(init: std.process.Init) !void {
     defer c.SDL_DestroyWindow(window);
 
     var settings: Settings = .{};
+
+    var wave_spec: c.SDL_AudioSpec = .{};
+    var wave_sound: ?[*]u8 = null;
+    var wave_soundlen: u32 = 0;
+    var stream: *c.SDL_AudioStream = undefined;
+    const audio_sample_path = "./assets/audio/MouthPop_AP1.1188.wav";
+
+    if (!c.SDL_LoadWAV(audio_sample_path, &wave_spec, &wave_sound, &wave_soundlen)) {
+        log.err("SDL_LoadWAV failed: {s}, with file: {s}", .{c.SDL_GetError(), audio_sample_path});
+        return error.SdlAudioFailed;
+    }
+    defer c.SDL_free(@ptrCast(wave_sound));
+
+    stream = c.SDL_OpenAudioDeviceStream(
+        c.SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, 
+        &wave_spec, 
+        null, 
+        null,
+    ) orelse {
+        log.err("Failed to open audio stream: {s}", .{c.SDL_GetError()});
+        return error.SdlAudioFailed;
+    };
+    defer c.SDL_DestroyAudioStream(stream);
+    _ = c.SDL_SetAudioStreamGain(stream, settings.master_volume);
+
     var bench: ?Bench = null;
     for (try init.minimal.args.toSlice(init.arena.allocator())) |arg| {
         if (std.mem.startsWith(u8, arg, "--bench")) {
@@ -287,6 +312,8 @@ pub fn main(init: std.process.Init) !void {
         if (target) |hit| {
             if (break_block) {
                 try world.setBlock(hit.block[0], hit.block[1], hit.block[2], .air);
+                _ = c.SDL_PutAudioStreamData(stream, wave_sound, @intCast(wave_soundlen));
+                _ = c.SDL_ResumeAudioDevice(c.SDL_GetAudioStreamDevice(stream));
             } else if (place_block and !std.meta.eql(hit.normal, .{ 0, 0, 0 })) {
                 const p = hit.adjacent();
                 if (!player.intersectsBlock(p[0], p[1], p[2])) try world.setBlock(p[0], p[1], p[2], BlockId.placeable[selected]);
@@ -434,6 +461,7 @@ pub fn main(init: std.process.Init) !void {
             try world.regenerate(&arena, settings.seed, frame_counter);
             try lod.clear(&arena, frame_counter);
         }
+        if (actions.volume_changed) _ = c.SDL_SetAudioStreamGain(stream, settings.master_volume);
         if (bench) |*b| if (b.frame(&world.stats, &lod.stats, dt_ms, now_ns)) break :main_loop;
 
         frame_counter += 1;

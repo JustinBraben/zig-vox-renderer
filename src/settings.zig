@@ -47,6 +47,8 @@ pub const Settings = struct {
     lod_split_dist: i32 = 3,
     lod_budget: i32 = 8,
 
+    master_volume: f32 = 0.5,
+
     /// guaranteed view distance in blocks: the voxel chunks, or the distant terrain when enabled
     pub fn viewDistance(self: *const Settings) f32 {
         const chunks: f32 = @floatFromInt(self.render_distance * 32);

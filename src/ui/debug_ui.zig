@@ -26,6 +26,7 @@ pub const Stats = struct {
 
 pub const Actions = struct {
     regenerate: bool = false,
+    volume_changed: bool = false,
 };
 
 pub fn draw(settings: *Settings, player: *Player, stats: Stats) Actions {
@@ -170,6 +171,14 @@ pub fn draw(settings: *Settings, player: *Player, stats: Stats) Actions {
                 settings.* = .{};
                 settings.seed = seed;
             }
+        }
+    }
+
+    if (dvui.expander(@src(), "Sound", .{ .default_expanded = true }, .{ .expand = .horizontal })) {
+        var section = dvui.box(@src(), .{}, .{ .expand = .horizontal, .margin = .{ .x = 12 } });
+        defer section.deinit();
+        if (dvui.sliderEntry(@src(), "Master volume: {d:0.2}", .{ .value = &settings.master_volume, .min = 0.0, .max = 1.0 }, .{ .expand = .horizontal })) {
+            actions.volume_changed = true;
         }
     }
 
