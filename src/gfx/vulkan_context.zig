@@ -184,7 +184,18 @@ fn pickPhysicalDevice(self: *Self) !void {
 
     for (physical_devices) |handle| {
         const props = self.instance.getPhysicalDeviceProperties(handle);
-        if (props.api_version < @as(u32, @bitCast(api_version))) continue;
+        if (props.api_version < @as(u32, @bitCast(api_version))) {
+            const got: vk.Version = @bitCast(props.api_version);
+            log.warn("skipping {s}: reports Vulkan {d}.{d}.{d}, need {d}.{d} (on macOS that means MoltenVK older than 1.3)", .{
+                std.mem.sliceTo(&props.device_name, 0),
+                got.major,
+                got.minor,
+                got.patch,
+                api_version.major,
+                api_version.minor,
+            });
+            continue;
+        }
 
         var has_swapchain = false;
         const extensions = try self.instance.enumerateDeviceExtensionPropertiesAlloc(handle, null, self.allocator);

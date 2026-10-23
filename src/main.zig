@@ -53,6 +53,9 @@ pub fn main(init: std.process.Init) !void {
     }
     defer c.SDL_Quit();
 
+    const vulkan_library_loaded = loadVulkanLibrary(init.environ_map);
+    defer if (vulkan_library_loaded) c.SDL_Vulkan_UnloadLibrary();
+
     var assets = try Assets.init(init.io, gpa);
     defer assets.deinit();
 
@@ -416,6 +419,47 @@ pub fn main(init: std.process.Init) !void {
 
         frame_counter += 1;
     }
+}
+
+/// SDL3 only `dlopen`s leaf names ("libvulkan.1.dylib", ...) when hunting for the Vulkan
+/// loader, and modern dyld no longer searches /usr/local/lib for those, so a LunarG or
+/// Homebrew install is never found. Load it from an absolute path ourselves;
+/// `SDL_CreateWindow` then reuses the already-loaded library. Returns whether we loaded it.
+fn loadVulkanLibrary(environ: *std.process.Environ.Map) bool {
+    if (builtin.os.tag != .macos) return false;
+    // SDL reads this hint from the environment itself, so let an explicit override win.
+    if (environ.get("SDL_VULKAN_LIBRARY") != null) return false;
+
+    if (environ.get("VULKAN_SDK")) |sdk| {
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        if (std.fmt.bufPrintZ(&buf, "{s}/lib/libvulkan.1.dylib", .{sdk})) |path| {
+            if (c.SDL_Vulkan_LoadLibrary(path.ptr)) {
+                log.info("loaded Vulkan loader from {s}", .{path});
+                return true;
+            }
+        } else |_| {}
+    }
+
+    // A loader is preferred over MoltenVK directly, since it provides the validation
+    // layers. Homebrew comes first: it is rolling, while the LunarG system install is a
+    // one-shot that tends to go stale, and a MoltenVK below 1.3 only reports Vulkan 1.2
+    // and gets rejected by `pickPhysicalDevice`.
+    const candidates = [_][*:0]const u8{
+        "/opt/homebrew/lib/libvulkan.1.dylib", // brew install vulkan-loader
+        "/usr/local/lib/libvulkan.1.dylib", // LunarG SDK, system-global install
+        "/opt/homebrew/lib/libMoltenVK.dylib", // brew install molten-vk
+        "/usr/local/lib/libMoltenVK.dylib",
+    };
+    for (candidates) |path| {
+        if (c.SDL_Vulkan_LoadLibrary(path)) {
+            log.info("loaded Vulkan loader from {s}", .{path});
+            return true;
+        }
+    }
+
+    // fall through: let SDL_CreateWindow try its own defaults and report its own error
+    log.warn("no Vulkan loader found; install the Vulkan SDK or set SDL_VULKAN_LIBRARY", .{});
+    return false;
 }
 
 /// `--bench[=render_distance]`: loads the world around a fixed camera with vsync off,
