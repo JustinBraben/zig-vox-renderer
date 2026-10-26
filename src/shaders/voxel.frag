@@ -23,6 +23,9 @@ layout(location = 5) flat in uint v_layer;
 
 layout(location = 0) out vec4 out_color;
 
+// 0: solid pass (alpha-tested, opaque output), 1: translucent pass (blended)
+layout(constant_id = 0) const bool translucent = false;
+
 vec3 srgbToLinear(vec3 c) {
     return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c));
 }
@@ -34,12 +37,14 @@ vec3 linearToSrgb(vec3 c) {
 
 void main() {
     vec3 albedo = srgbToLinear(v_color);
+    float alpha = 1.0;
     if (v_layer != 255u) {
         vec4 texel = texture(blocks, vec3(v_uv, float(v_layer)));
-        // all blocks are drawn opaque for now: see-through texels (leaf gaps) show a dark
-        // shade of the block's color
-        albedo = mix(albedo * 0.25, texel.rgb, texel.a);
+        albedo = texel.rgb;
+        alpha = texel.a;
     }
+    // cutout: leaf gaps
+    if (!translucent && alpha < 0.5) discard;
     vec3 n = normalize(v_normal);
 
     float sun = max(dot(n, scene.sun_dir.xyz), 0.0);
@@ -56,5 +61,5 @@ void main() {
         color = mix(color, fog, t);
     }
 
-    out_color = vec4(linearToSrgb(color), 1.0);
+    out_color = vec4(linearToSrgb(color), translucent ? alpha : 1.0);
 }

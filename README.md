@@ -20,7 +20,7 @@ zig build run
 
 Click the world to capture the mouse, Esc releases it for the debug UI.
 
-- WASD: move, Space: jump (up while flying), Ctrl: down while flying, Shift: sprint
+- WASD: move, Space: jump (swim up in water, up while flying), Ctrl: down while flying, Shift: sprint
 - Left mouse: break block, right mouse: place block, mouse wheel / 1-9: pick block
 - F: toggle flying
 

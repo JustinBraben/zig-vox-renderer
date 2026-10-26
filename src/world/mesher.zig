@@ -2,7 +2,8 @@
 //!
 //! Input is a padded (32+2)³ block volume: the chunk plus a one-block border from
 //! its neighbors, so faces and AO at chunk edges are correct. Output is one quad
-//! (4 vertices) per visible face, drawn with a shared `0,1,2, 2,3,0` index pattern.
+//! (4 vertices) per visible face, drawn with a shared `0,1,2, 2,3,0` index pattern,
+//! split into the solid mesh (opaque and cutout blocks) and the translucent one.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -70,6 +71,17 @@ const materials = blk: {
     break :blk table;
 };
 
+/// `BlockId.isOpaque` by block id, so the inner loop is a load instead of a switch.
+const opaque_blocks = blk: {
+    var table: [256]bool = undefined;
+    for (&table, 0..) |*o, id| o.* = BlockId.isOpaque(@enumFromInt(id));
+    break :blk table;
+};
+
+fn isOpaque(block: BlockId) bool {
+    return opaque_blocks[@intFromEnum(block)];
+}
+
 /// The vertex `color` word for `face` of `block`.
 pub fn material(block: BlockId, face: usize) u32 {
     return materials[@intFromEnum(block)][face];
@@ -111,28 +123,53 @@ fn paddedOffset(d: [3]i32) usize {
     return paddedIndex(d[0] + 1, d[1] + 1, d[2] + 1);
 }
 
-/// Appends the mesh of the padded volume's inner chunk to `out`.
-pub fn meshChunk(allocator: Allocator, padded: *const Padded, out: *std.ArrayList(Vertex)) !void {
+/// The two meshes of a chunk.
+pub const Output = struct {
+    /// opaque and cutout blocks
+    solid: std.ArrayList(Vertex) = .empty,
+    /// blended blocks (water, glass)
+    translucent: std.ArrayList(Vertex) = .empty,
+
+    pub fn clear(self: *Output) void {
+        self.solid.clearRetainingCapacity();
+        self.translucent.clearRetainingCapacity();
+    }
+
+    pub fn deinit(self: *Output, allocator: Allocator) void {
+        self.solid.deinit(allocator);
+        self.translucent.deinit(allocator);
+    }
+};
+
+/// Appends the meshes of the padded volume's inner chunk to `out`.
+pub fn meshChunk(allocator: Allocator, padded: *const Padded, out: *Output) !void {
     for (1..chunk.size + 1) |y| {
         for (1..chunk.size + 1) |z| {
             for (1..chunk.size + 1) |x| {
                 const block = padded[paddedIndex(x, y, z)];
-                if (!block.isOpaque()) continue;
+                const list = switch (block.layer()) {
+                    .none => continue,
+                    .opaque_cube, .cutout => &out.solid,
+                    .translucent => &out.translucent,
+                };
                 const block_materials = &materials[@intFromEnum(block)];
+                const translucent = block.layer() == .translucent;
                 const origin = paddedIndex(x - 1, y - 1, z - 1);
                 const packed_pos = Vertex.init(@intCast(x - 1), @intCast(y - 1), @intCast(z - 1), 0, 0, 0).data;
-                try out.ensureUnusedCapacity(allocator, 6 * 4);
+                try list.ensureUnusedCapacity(allocator, 6 * 4);
 
                 inline for (face_tables, 0..) |t, face_index| {
-                    if (!padded[origin + t.front].isOpaque()) {
+                    // `BlockId.faceVisible`, unrolled
+                    const front = padded[origin + t.front];
+                    if (!isOpaque(front) and (front != block or !translucent)) {
                         var ao: [4]u32 = undefined;
                         inline for (&ao, t.ao) |*corner_ao, n| {
-                            corner_ao.* = vertexAo(padded[origin + n[0]].isOpaque(), padded[origin + n[1]].isOpaque(), padded[origin + n[2]].isOpaque());
+                            corner_ao.* = vertexAo(isOpaque(padded[origin + n[0]]), isOpaque(padded[origin + n[1]]), isOpaque(padded[origin + n[2]]));
                         }
 
                         // flip the quad diagonal to avoid anisotropic AO interpolation
                         const rotate: usize = if (ao[0] + ao[2] > ao[1] + ao[3]) 1 else 0;
-                        const quad = out.addManyAsArrayAssumeCapacity(4);
+                        const quad = list.addManyAsArrayAssumeCapacity(4);
                         for (quad, 0..) |*vertex, i| {
                             const ci = (i + rotate) % 4;
                             vertex.* = .{ .data = (packed_pos + t.vertex[ci]) | (ao[ci] << 21), .color = block_materials[face_index] };
@@ -176,11 +213,11 @@ test "lone block has six open faces" {
     defer testing.allocator.destroy(padded);
     set(padded, 5, 5, 5, .stone);
 
-    var out: std.ArrayList(Vertex) = .empty;
+    var out: Output = .{};
     defer out.deinit(testing.allocator);
     try meshChunk(testing.allocator, padded, &out);
-    try testing.expectEqual(@as(usize, 6 * 4), out.items.len);
-    for (out.items) |v| try testing.expectEqual(@as(u2, 3), v.ao());
+    try testing.expectEqual(@as(usize, 6 * 4), out.solid.items.len);
+    for (out.solid.items) |v| try testing.expectEqual(@as(u2, 3), v.ao());
 }
 
 test "adjacent blocks hide the shared faces" {
@@ -189,10 +226,10 @@ test "adjacent blocks hide the shared faces" {
     set(padded, 5, 5, 5, .stone);
     set(padded, 6, 5, 5, .stone);
 
-    var out: std.ArrayList(Vertex) = .empty;
+    var out: Output = .{};
     defer out.deinit(testing.allocator);
     try meshChunk(testing.allocator, padded, &out);
-    try testing.expectEqual(@as(usize, 10 * 4), out.items.len);
+    try testing.expectEqual(@as(usize, 10 * 4), out.solid.items.len);
 }
 
 test "neighbor border hides edge faces" {
@@ -202,11 +239,11 @@ test "neighbor border hides edge faces" {
     set(padded, -1, 0, 0, .stone); // in the -X neighbor
     set(padded, 0, -1, 0, .stone); // in the -Y neighbor
 
-    var out: std.ArrayList(Vertex) = .empty;
+    var out: Output = .{};
     defer out.deinit(testing.allocator);
     try meshChunk(testing.allocator, padded, &out);
     // only the inner block is meshed, minus the two covered faces
-    try testing.expectEqual(@as(usize, 4 * 4), out.items.len);
+    try testing.expectEqual(@as(usize, 4 * 4), out.solid.items.len);
 }
 
 test "ambient occlusion next to a wall" {
@@ -216,22 +253,22 @@ test "ambient occlusion next to a wall" {
     set(padded, 5, 5, 5, .stone);
     set(padded, 6, 6, 5, .stone);
 
-    var out: std.ArrayList(Vertex) = .empty;
+    var out: Output = .{};
     defer out.deinit(testing.allocator);
     try meshChunk(testing.allocator, padded, &out);
 
     // find the +Y face of the floor block (face 2, y = 6 in chunk space, x in 5..6)
     var found = false;
     var i: usize = 0;
-    while (i < out.items.len) : (i += 4) {
-        const v0 = out.items[i];
+    while (i < out.solid.items.len) : (i += 4) {
+        const v0 = out.solid.items[i];
         const face = (v0.data >> 18) & 7;
         const y = (v0.data >> 6) & 63;
         const x = v0.data & 63;
         if (face != 2 or y != 6 or x > 6) continue;
         if (x < 5) continue;
         found = true;
-        for (out.items[i..][0..4]) |v| {
+        for (out.solid.items[i..][0..4]) |v| {
             const vx = v.data & 63;
             // corners on the wall side are darkened by one side neighbor
             const expected: u2 = if (vx == 6) 2 else 3;
@@ -243,7 +280,7 @@ test "ambient occlusion next to a wall" {
 }
 
 /// The original straightforward mesher, kept to check the table-driven one against.
-fn meshChunkReference(allocator: Allocator, padded: *const Padded, out: *std.ArrayList(Vertex)) !void {
+fn meshChunkReference(allocator: Allocator, padded: *const Padded, out: *Output) !void {
     const Ref = struct {
         fn solid(v: *const Padded, p: [3]i32) bool {
             return v[paddedIndex(@intCast(p[0]), @intCast(p[1]), @intCast(p[2]))].isOpaque();
@@ -253,11 +290,12 @@ fn meshChunkReference(allocator: Allocator, padded: *const Padded, out: *std.Arr
         for (1..chunk.size + 1) |z| {
             for (1..chunk.size + 1) |x| {
                 const block = padded[paddedIndex(x, y, z)];
-                if (!block.isOpaque()) continue;
+                if (block.layer() == .none) continue;
+                const list = if (block.layer() == .translucent) &out.translucent else &out.solid;
                 const p = [3]i32{ @intCast(x), @intCast(y), @intCast(z) };
                 for (faces, 0..) |face, face_index| {
                     const front = add(p, face.normal);
-                    if (Ref.solid(padded, front)) continue;
+                    if (!block.faceVisible(padded[paddedIndex(@intCast(front[0]), @intCast(front[1]), @intCast(front[2]))])) continue;
                     var ao: [4]u32 = undefined;
                     for (corner_uv, &ao) |uv, *corner_ao| {
                         const du = scale(face.u, uv[0] * 2 - 1);
@@ -274,7 +312,7 @@ fn meshChunkReference(allocator: Allocator, padded: *const Padded, out: *std.Arr
                         const ci = (i + rotate) % 4;
                         const uv = corner_uv[ci];
                         const pos = add(add(base, scale(face.u, uv[0])), scale(face.v, uv[1]));
-                        try out.append(allocator, .init(@intCast(pos[0]), @intCast(pos[1]), @intCast(pos[2]), @intCast(face_index), ao[ci], material(block, face_index)));
+                        try list.append(allocator, .init(@intCast(pos[0]), @intCast(pos[1]), @intCast(pos[2]), @intCast(face_index), ao[ci], material(block, face_index)));
                     }
                 }
             }
@@ -287,17 +325,20 @@ test "table-driven mesher matches the reference on a random volume" {
     defer testing.allocator.destroy(padded);
     var prng: std.Random.DefaultPrng = .init(42);
     const random = prng.random();
-    for (padded) |*b| b.* = if (random.uintLessThan(u8, 100) < 45) .stone else if (random.boolean()) .grass else .air;
+    const palette = [_]BlockId{ .stone, .stone, .grass, .leaves, .water, .glass, .air, .air, .air };
+    for (padded) |*b| b.* = palette[random.uintLessThan(usize, palette.len)];
 
-    var expected: std.ArrayList(Vertex) = .empty;
+    var expected: Output = .{};
     defer expected.deinit(testing.allocator);
     try meshChunkReference(testing.allocator, padded, &expected);
-    var actual: std.ArrayList(Vertex) = .empty;
+    var actual: Output = .{};
     defer actual.deinit(testing.allocator);
     try meshChunk(testing.allocator, padded, &actual);
 
-    try testing.expect(expected.items.len > 1000);
-    try testing.expectEqualSlices(Vertex, expected.items, actual.items);
+    try testing.expect(expected.solid.items.len > 1000);
+    try testing.expect(expected.translucent.items.len > 1000);
+    try testing.expectEqualSlices(Vertex, expected.solid.items, actual.solid.items);
+    try testing.expectEqualSlices(Vertex, expected.translucent.items, actual.translucent.items);
 }
 
 test "faces get their block's texture layers" {
@@ -305,10 +346,10 @@ test "faces get their block's texture layers" {
     defer testing.allocator.destroy(padded);
     set(padded, 5, 5, 5, .grass);
 
-    var out: std.ArrayList(Vertex) = .empty;
+    var out: Output = .{};
     defer out.deinit(testing.allocator);
     try meshChunk(testing.allocator, padded, &out);
-    for (out.items) |v| {
+    for (out.solid.items) |v| {
         const face = (v.data >> 18) & 7;
         const expected: block_mod.Tile = switch (face) {
             2 => .grass_top,
@@ -318,4 +359,36 @@ test "faces get their block's texture layers" {
         try testing.expectEqual(@as(u32, @intFromEnum(expected)), v.color >> 24);
         try testing.expectEqual(BlockId.grass.color() & 0xffffff, v.color & 0xffffff);
     }
+}
+
+test "water and glass hide their inner faces but not what they cover" {
+    const padded = try emptyVolume();
+    defer testing.allocator.destroy(padded);
+    // a 2×1×1 pool of water on a stone floor, with a glass pane next to it
+    set(padded, 5, 5, 5, .water);
+    set(padded, 6, 5, 5, .water);
+    set(padded, 5, 4, 5, .stone);
+    set(padded, 7, 5, 5, .glass);
+
+    var out: Output = .{};
+    defer out.deinit(testing.allocator);
+    try meshChunk(testing.allocator, padded, &out);
+    // stone: all six faces (water doesn't hide them)
+    try testing.expectEqual(@as(usize, 6 * 4), out.solid.items.len);
+    // water: 10 outer faces of the pair minus the bottom of the block on stone;
+    // glass: all six, including the one against the water
+    try testing.expectEqual(@as(usize, (9 + 6) * 4), out.translucent.items.len);
+}
+
+test "leaves keep the faces between them" {
+    const padded = try emptyVolume();
+    defer testing.allocator.destroy(padded);
+    set(padded, 5, 5, 5, .leaves);
+    set(padded, 6, 5, 5, .leaves);
+
+    var out: Output = .{};
+    defer out.deinit(testing.allocator);
+    try meshChunk(testing.allocator, padded, &out);
+    try testing.expectEqual(@as(usize, 12 * 4), out.solid.items.len);
+    try testing.expectEqual(@as(usize, 0), out.translucent.items.len);
 }

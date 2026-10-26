@@ -53,8 +53,9 @@ pub const Chunk = struct {
     blocks: ?*Blocks = null,
     uniform: BlockId = .air,
     state: State = .generated,
-    /// vertex range in the mesh arena, null when there is nothing to draw
+    /// vertex ranges in the mesh arena, null when there is nothing to draw
     mesh: ?MeshRange = null,
+    translucent_mesh: ?MeshRange = null,
     /// bit per side (+X, -X, +Y, -Y, +Z, -Z, as in the mesher), set when that
     /// whole boundary layer is opaque; see `updateSolidSides`
     solid_sides: u6 = 0,

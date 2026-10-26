@@ -349,7 +349,9 @@ pub fn main(init: std.process.Init) !void {
 
         const aspect = @as(f32, @floatFromInt(swapchain.extent.width)) / @as(f32, @floatFromInt(swapchain.extent.height));
         const view_proj = Camera.projection(settings.fov_deg, aspect).mul(camera.view());
-        voxel.setScene(frame_index, sceneUniforms(&settings, view_proj));
+        const eye_block = [3]i32{ @intFromFloat(@floor(camera.position[0])), @intFromFloat(@floor(camera.position[1])), @intFromFloat(@floor(camera.position[2])) };
+        const underwater = world.isWater(eye_block[0], eye_block[1], eye_block[2]);
+        voxel.setScene(frame_index, sceneUniforms(&settings, view_proj, underwater));
 
         // record
         const cmd = frame.cmd;
@@ -386,12 +388,15 @@ pub fn main(init: std.process.Init) !void {
             },
         });
 
-        voxel.bind(cmd, frame_index, swapchain.extent, &arena);
+        voxel.bind(cmd, frame_index, swapchain.extent, &arena, .solid);
         const frustum: ?math.Frustum = if (settings.frustum_culling) .fromViewProj(view_proj) else null;
         // near to far, so the chunks fill the depth buffer before the distant terrain
         world.draw(cmd, &voxel, camera.position, frustum, world_config, if (settings.lod_enabled) &lod.columns else null);
         if (settings.lod_enabled) lod.draw(cmd, &voxel, camera.position, frustum);
         if (settings.skybox) sky_pipeline.draw(cmd, &voxel, frame_index, &camera, settings.fov_deg, aspect);
+        // blended last, over the sky too
+        voxel.bind(cmd, frame_index, swapchain.extent, &arena, .translucent);
+        world.drawTranslucent(cmd, &voxel);
         outline.bind(cmd, &voxel, frame_index);
         if (target) |hit| {
             const corner: @Vector(3, f64) = .{ @floatFromInt(hit.block[0]), @floatFromInt(hit.block[1]), @floatFromInt(hit.block[2]) };
@@ -603,9 +608,22 @@ fn setCaptured(window: *c.SDL_Window, capture: bool) bool {
     return capture;
 }
 
-fn sceneUniforms(settings: *const Settings, view_proj: math.Mat4) VoxelPipeline.Scene {
+/// Fog color and distance (in blocks) with the camera underwater.
+const underwater_fog_color = [3]f32{ 0.02, 0.08, 0.2 };
+const underwater_fog_end = 24;
+
+fn sceneUniforms(settings: *const Settings, view_proj: math.Mat4, underwater: bool) VoxelPipeline.Scene {
     const sun_dir = math.fromDirection(settings.sun_azimuth, settings.sun_elevation);
     const fog = settings.fogRange() orelse .{ 0, 0 };
+    if (underwater) {
+        var scene = sceneUniforms(settings, view_proj, false);
+        scene.fog_color = .{ underwater_fog_color[0], underwater_fog_color[1], underwater_fog_color[2], 1 };
+        scene.params[0] = 0;
+        scene.params[1] = underwater_fog_end;
+        // flat fog color instead of the skybox
+        scene.params[3] = 0;
+        return scene;
+    }
     return .{
         .view_proj = view_proj,
         .sun_dir = .{ sun_dir[0], sun_dir[1], sun_dir[2], 0 },

@@ -68,7 +68,9 @@ heightmaps: std.AutoHashMapUnmanaged([2]i32, *Terrain.Heightmap) = .empty,
 offsets: std.ArrayList([2]i32) = .empty,
 offsets_radius: i32 = -1,
 padded: *mesher.Padded,
-vertices: std.ArrayList(mesher.Vertex) = .empty,
+meshes: mesher.Output = .{},
+/// translucent chunk draws of the frame, sorted back to front
+translucent_draws: std.ArrayList(TranslucentDraw) = .empty,
 scratch_keys: std.ArrayList(ChunkPos) = .empty,
 scratch_columns: std.ArrayList([2]i32) = .empty,
 /// chunks whose blocks were edited (or that border an edit) and need a new mesh;
@@ -80,6 +82,12 @@ last_config: ?Config = null,
 /// every chunk in range is generated and meshed, so updates can be skipped
 settled: bool = false,
 stats: Stats = .{},
+
+const TranslucentDraw = struct {
+    distance: f32,
+    origin: math.Vec3,
+    range: chunk.MeshRange,
+};
 
 pub fn init(allocator: Allocator, io: std.Io, seed: u64) !Self {
     return .{
@@ -98,7 +106,8 @@ pub fn deinit(self: *Self) void {
     self.heightmaps.deinit(self.allocator);
     self.scratch_columns.deinit(self.allocator);
     self.offsets.deinit(self.allocator);
-    self.vertices.deinit(self.allocator);
+    self.meshes.deinit(self.allocator);
+    self.translucent_draws.deinit(self.allocator);
     self.scratch_keys.deinit(self.allocator);
     self.dirty.deinit(self.allocator);
     self.allocator.destroy(self.padded);
@@ -108,7 +117,7 @@ pub fn deinit(self: *Self) void {
 pub fn regenerate(self: *Self, arena: *MeshArena, seed: u64, frame: u64) !void {
     var it = self.chunks.valueIterator();
     while (it.next()) |c| {
-        if (c.*.mesh) |range| try arena.free(range, frame);
+        try freeMeshes(arena, c.*, frame);
         self.destroyChunk(c.*);
     }
     self.chunks.clearRetainingCapacity();
@@ -129,8 +138,15 @@ pub fn getBlock(self: *const Self, x: i32, y: i32, z: i32) ?BlockId {
 /// Whether the block blocks movement. Falls back to the generated terrain where no
 /// chunk is loaded, so the edge of the loaded area is neither a wall nor a pit.
 pub fn isSolid(self: *const Self, x: i32, y: i32, z: i32) bool {
-    const block = self.getBlock(x, y, z) orelse self.terrain.block(x, y, z);
-    return block.isOpaque();
+    return self.blockOrTerrain(x, y, z).isSolid();
+}
+
+pub fn isWater(self: *const Self, x: i32, y: i32, z: i32) bool {
+    return self.blockOrTerrain(x, y, z) == .water;
+}
+
+fn blockOrTerrain(self: *const Self, x: i32, y: i32, z: i32) BlockId {
+    return self.getBlock(x, y, z) orelse self.terrain.block(x, y, z);
 }
 
 /// Changes one block and queues remeshing of its chunk and of every neighbor whose
@@ -273,13 +289,14 @@ pub fn columnReady(self: *const Self, x: i32, z: i32, config: Config) bool {
     var y = config.min_y;
     while (y <= config.max_y) : (y += 1) {
         const c = self.chunks.get(.{ .x = x, .y = y, .z = z }) orelse return false;
-        if (c.state != .meshed and c.mesh == null) return false;
+        if (c.state != .meshed and c.mesh == null and c.translucent_mesh == null) return false;
     }
     return true;
 }
 
-/// Records draws for every meshed chunk in view, limited to `columns` when given
-/// (the rest is covered by distant terrain). Expects `pipeline.bind` to have been called.
+/// Records draws for the solid mesh of every chunk in view, limited to `columns` when
+/// given (the rest is covered by distant terrain), and collects the translucent meshes
+/// for `drawTranslucent`. Expects `pipeline.bind(..., .solid)` to have been called.
 pub fn draw(self: *Self, cmd: vk.CommandBuffer, pipeline: *const VoxelPipeline, camera_pos: @Vector(3, f64), frustum: ?math.Frustum, config: Config, columns: ?*const ColumnSet) void {
     const start = self.now();
     const center = ChunkPos.fromWorld(camera_pos);
@@ -287,11 +304,12 @@ pub fn draw(self: *Self, cmd: vk.CommandBuffer, pipeline: *const VoxelPipeline, 
     var drawn: u32 = 0;
     var meshed: u32 = 0;
     var vertices: u64 = 0;
+    self.translucent_draws.clearRetainingCapacity();
 
     var it = self.chunks.valueIterator();
     while (it.next()) |entry| {
         const c = entry.*;
-        const range = c.mesh orelse continue;
+        if (c.mesh == null and c.translucent_mesh == null) continue;
         meshed += 1;
         if (@abs(c.pos.x - center.x) > r or @abs(c.pos.z - center.z) > r) continue;
         if (c.pos.y < config.min_y or c.pos.y > config.max_y) continue;
@@ -301,15 +319,36 @@ pub fn draw(self: *Self, cmd: vk.CommandBuffer, pipeline: *const VoxelPipeline, 
         if (frustum) |f| {
             if (!f.intersectsAabb(origin, origin + @as(math.Vec3, @splat(chunk.size)))) continue;
         }
-        pipeline.drawChunk(cmd, origin, range, 1);
+        if (c.mesh) |range| {
+            pipeline.drawChunk(cmd, origin, range, 1);
+            vertices += range.count;
+        }
+        if (c.translucent_mesh) |range| {
+            const center_offset = origin + @as(math.Vec3, @splat(chunk.size / 2));
+            // without room to sort, the chunk's water and glass are skipped this frame
+            self.translucent_draws.append(self.allocator, .{ .distance = math.length(center_offset), .origin = origin, .range = range }) catch {};
+            vertices += range.count;
+        }
         drawn += 1;
-        vertices += range.count;
     }
+
+    // farthest first, so nearer surfaces blend over farther ones
+    std.mem.sort(TranslucentDraw, self.translucent_draws.items, {}, struct {
+        fn farther(_: void, a: TranslucentDraw, b: TranslucentDraw) bool {
+            return a.distance > b.distance;
+        }
+    }.farther);
 
     self.stats.meshed = meshed;
     self.stats.drawn = drawn;
     self.stats.drawn_vertices = vertices;
     self.stats.draw_ms = toMs(self.since(start));
+}
+
+/// Records the translucent meshes collected by the last `draw`. Expects
+/// `pipeline.bind(..., .translucent)` to have been called.
+pub fn drawTranslucent(self: *const Self, cmd: vk.CommandBuffer, pipeline: *const VoxelPipeline) void {
+    for (self.translucent_draws.items) |d| pipeline.drawChunk(cmd, d.origin, d.range, 1);
 }
 
 fn now(self: *const Self) std.Io.Timestamp {
@@ -351,8 +390,7 @@ fn unloadFar(self: *Self, arena: *MeshArena, center: ChunkPos, r: i32, config: C
     }
     for (self.scratch_keys.items) |pos| {
         const c = self.chunks.get(pos).?;
-        if (c.mesh) |range| try arena.free(range, frame);
-        c.mesh = null;
+        try freeMeshes(arena, c, frame);
         if (c.modified) {
             // keep the edited blocks (they can't be regenerated); remesh when back in range
             c.state = .generated;
@@ -400,7 +438,7 @@ fn generateChunk(self: *Self, pos: ChunkPos) !void {
         .uniform => |block| {
             c.uniform = block;
             // nothing to mesh in an all-air chunk
-            if (!block.isOpaque()) c.state = .meshed;
+            if (block == .air) c.state = .meshed;
         },
         .mixed => {
             const blocks = try self.allocator.create(chunk.Blocks);
@@ -410,6 +448,13 @@ fn generateChunk(self: *Self, pos: ChunkPos) !void {
     }
     c.updateSolidSides();
     try self.chunks.put(self.allocator, pos, c);
+}
+
+fn freeMeshes(arena: *MeshArena, c: *Chunk, frame: u64) !void {
+    if (c.mesh) |range| try arena.free(range, frame);
+    if (c.translucent_mesh) |range| try arena.free(range, frame);
+    c.mesh = null;
+    c.translucent_mesh = null;
 }
 
 fn destroyChunk(self: *Self, c: *Chunk) void {
@@ -445,24 +490,29 @@ fn buried(self: *const Self, c: *const Chunk) bool {
 }
 
 fn meshChunk(self: *Self, arena: *MeshArena, c: *Chunk, frame: u64) !void {
-    self.vertices.clearRetainingCapacity();
+    self.meshes.clear();
     if (self.buried(c)) {
         self.stats.mesh_skipped += 1;
     } else {
         self.fillPadded(c.pos);
-        try mesher.meshChunk(self.allocator, self.padded, &self.vertices);
+        try mesher.meshChunk(self.allocator, self.padded, &self.meshes);
     }
 
-    if (c.mesh) |old| try arena.free(old, frame);
-    c.mesh = null;
+    try freeMeshes(arena, c, frame);
     c.state = .meshed;
-    if (self.vertices.items.len == 0) return;
+    c.mesh = try self.upload(arena, self.meshes.solid.items);
+    c.translucent_mesh = try self.upload(arena, self.meshes.translucent.items);
+}
 
-    c.mesh = try arena.upload(self.vertices.items);
-    if (c.mesh == null and !self.stats.arena_full) {
+/// Null when there is nothing to upload or the arena is full.
+fn upload(self: *Self, arena: *MeshArena, vertices: []const mesher.Vertex) !?chunk.MeshRange {
+    if (vertices.len == 0) return null;
+    const range = try arena.upload(vertices);
+    if (range == null and !self.stats.arena_full) {
         log.warn("mesh arena is full ({d} vertices); increase its capacity or lower the render distance", .{arena.capacity});
         self.stats.arena_full = true;
     }
+    return range;
 }
 
 /// Copies the chunk and a one-block border of its 26 neighbors into `self.padded`.

@@ -1,5 +1,5 @@
-//! The player: an axis-aligned box with gravity, jumping and block collision, or a
-//! collision-free flying camera. Stepped at a fixed rate; `eye` interpolates
+//! The player: an axis-aligned box with gravity, jumping, swimming and block collision,
+//! or a collision-free flying camera. Stepped at a fixed rate; `eye` interpolates
 //! between the last two steps for rendering.
 
 const std = @import("std");
@@ -22,6 +22,13 @@ const terminal_speed = 60.0;
 /// how quickly horizontal velocity reaches the target (1/s)
 const ground_accel = 20.0;
 const air_accel = 4.0;
+const water_accel = 8.0;
+/// in water: horizontal speed factor, gravity, and sinking / swimming up speeds
+const swim_factor = 0.55;
+const water_gravity = 6.0;
+const sink_speed = 3.0;
+const swim_up_speed = 4.0;
+const swim_up_accel = 30.0;
 
 /// Movement intent for one step; axes are -1..1.
 pub const Input = struct {
@@ -29,6 +36,7 @@ pub const Input = struct {
     right: f32 = 0,
     /// fly up / down
     up: f32 = 0,
+    /// jump, or swim up in water
     jump: bool = false,
     sprint: bool = false,
     /// flying speed in blocks per second
@@ -40,32 +48,43 @@ position: Pos,
 prev_position: Pos,
 velocity: Pos = .{ 0, 0, 0 },
 on_ground: bool = false,
+/// some of the body is in water (as of the last step)
+in_water: bool = false,
 flying: bool = false,
 
 pub fn init(position: Pos) Self {
     return .{ .position = position, .prev_position = position };
 }
 
-/// Advances one fixed step. `world.isSolid(x, y, z) bool` decides what blocks movement.
+/// Advances one fixed step. `world.isSolid(x, y, z) bool` decides what blocks movement,
+/// `world.isWater(x, y, z) bool` where the player swims.
 pub fn step(self: *Self, world: anytype, input: Input, yaw: f32, pitch: f32, dt: f64) void {
     self.prev_position = self.position;
     if (self.flying) return self.fly(input, yaw, pitch, dt);
+    self.in_water = touchesWater(world, self.position);
 
     // horizontal movement only follows the yaw, so looking down doesn't slow you down
     const forward = math.fromDirection(yaw, 0);
     const right = math.normalize(math.cross(forward, .{ 0, 1, 0 }));
     var wish = math.scale(forward, input.forward) + math.scale(right, input.right);
     if (math.length(wish) > 0) wish = math.normalize(wish);
-    const speed: f64 = if (input.sprint) sprint_speed else walk_speed;
-    const accel: f64 = if (self.on_ground) ground_accel else air_accel;
+    var speed: f64 = if (input.sprint) sprint_speed else walk_speed;
+    if (self.in_water) speed *= swim_factor;
+    const accel: f64 = if (self.in_water) water_accel else if (self.on_ground) ground_accel else air_accel;
     const blend = 1 - @exp(-accel * dt);
     inline for (.{ 0, 2 }) |axis| {
         const target = @as(f64, wish[axis]) * speed;
         self.velocity[axis] += (target - self.velocity[axis]) * blend;
     }
 
-    if (input.jump and self.on_ground) self.velocity[1] = jump_speed;
-    self.velocity[1] = @max(self.velocity[1] - gravity * dt, -terminal_speed);
+    if (self.in_water) {
+        // sink slowly; holding jump swims up
+        self.velocity[1] = @max(self.velocity[1] - water_gravity * dt, -sink_speed);
+        if (input.jump) self.velocity[1] = @min(self.velocity[1] + swim_up_accel * dt, swim_up_speed);
+    } else {
+        if (input.jump and self.on_ground) self.velocity[1] = jump_speed;
+        self.velocity[1] = @max(self.velocity[1] - gravity * dt, -terminal_speed);
+    }
 
     // one axis at a time, so blocked movement slides along walls
     self.on_ground = false;
@@ -104,6 +123,16 @@ fn fly(self: *Self, input: Input, yaw: f32, pitch: f32, dt: f64) void {
     const speed = input.fly_speed * @as(f32, if (input.sprint) 4 else 1);
     self.velocity = @floatCast(math.scale(math.normalize(dir), speed));
     self.position += self.velocity * @as(Pos, @splat(dt));
+}
+
+/// Whether the water reaches the feet or the middle of the body at `p`.
+fn touchesWater(world: anytype, p: Pos) bool {
+    const x: i32 = @intFromFloat(@floor(p[0]));
+    const z: i32 = @intFromFloat(@floor(p[2]));
+    inline for (.{ 0.1, height / 2.0 }) |dy| {
+        if (world.isWater(x, @intFromFloat(@floor(p[1] + dy)), z)) return true;
+    }
+    return false;
 }
 
 const Box = struct { min: Pos, max: Pos };
@@ -166,6 +195,21 @@ const TestWorld = struct {
     pub fn isSolid(_: TestWorld, x: i32, y: i32, z: i32) bool {
         return y < 0 or x >= 3 or (z >= 5 and y >= 4);
     }
+
+    pub fn isWater(_: TestWorld, _: i32, _: i32, _: i32) bool {
+        return false;
+    }
+};
+
+/// Solid below y = 0, water from y = 0 up to y = 9.
+const PoolWorld = struct {
+    pub fn isSolid(_: PoolWorld, _: i32, y: i32, _: i32) bool {
+        return y < 0;
+    }
+
+    pub fn isWater(_: PoolWorld, _: i32, y: i32, _: i32) bool {
+        return y >= 0 and y < 10;
+    }
 };
 
 fn simulate(p: *Self, input: Input, seconds: f64) void {
@@ -224,4 +268,19 @@ test "block intersection" {
     try std.testing.expect(!p.intersectsBlock(0, 2, 0));
     try std.testing.expect(!p.intersectsBlock(1, 0, 0));
     try std.testing.expect(!p.intersectsBlock(0, -1, 0));
+}
+
+test "sinks slowly in water and swims up while jump is held" {
+    const dt = 1.0 / 60.0;
+    var p = Self.init(.{ 0.5, 6, 0.5 });
+    for (0..30) |_| {
+        p.step(PoolWorld{}, .{}, 0, 0, dt);
+        try std.testing.expect(p.velocity[1] >= -sink_speed);
+    }
+    try std.testing.expect(p.in_water);
+    const sunk = p.position[1];
+    try std.testing.expect(sunk < 6 and sunk > 6 - sink_speed * 0.5);
+
+    for (0..60) |_| p.step(PoolWorld{}, .{ .jump = true }, 0, 0, dt);
+    try std.testing.expect(p.position[1] > sunk + 1);
 }

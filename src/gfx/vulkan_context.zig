@@ -270,6 +270,8 @@ fn createLogicalDevice(self: *Self) !void {
     var vulkan13_features = vk.PhysicalDeviceVulkan13Features{
         .dynamic_rendering = .true,
         .synchronization_2 = .true,
+        // `discard` compiles to OpDemoteToHelperInvocation for Vulkan 1.3 (required by 1.3)
+        .shader_demote_to_helper_invocation = .true,
     };
 
     const handle = try self.instance.createDevice(self.physical_device, &.{

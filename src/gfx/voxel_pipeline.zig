@@ -1,5 +1,6 @@
-//! Opaque voxel pipeline: packed chunk vertices, depth tested (reverse-Z),
-//! lit by a per-frame scene uniform buffer. Its descriptor sets also hold the sky
+//! Voxel pipelines: packed chunk vertices, depth tested (reverse-Z), lit by a
+//! per-frame scene uniform buffer. The solid pass writes depth and alpha-tests cutout
+//! texels; the translucent pass blends over it without writing depth. Its descriptor sets also hold the sky
 //! cubemap (binding 1), shared with the sky pipeline, and the block textures (binding 2).
 
 const std = @import("std");
@@ -40,11 +41,13 @@ pub const PushConstants = extern struct {
 
 pub const max_frames = 4;
 
+pub const Pass = enum(u32) { solid, translucent };
+
 device: vk.DeviceProxy,
 set_layout: vk.DescriptorSetLayout,
 descriptor_pool: vk.DescriptorPool,
 layout: vk.PipelineLayout,
-pipeline: vk.Pipeline,
+pipelines: std.EnumArray(Pass, vk.Pipeline),
 scene_buffers: [max_frames]Buffer = undefined,
 descriptor_sets: [max_frames]vk.DescriptorSet = undefined,
 frame_count: usize,
@@ -89,8 +92,10 @@ pub fn init(device: vk.DeviceProxy, memory: VkMemory, assets: *const Assets, sky
     }, null);
     errdefer device.destroyPipelineLayout(layout, null);
 
-    const pipeline = try createPipeline(device, assets, layout, color_format, depth_format);
-    errdefer device.destroyPipeline(pipeline, null);
+    const solid = try createPipeline(device, assets, layout, color_format, depth_format, .solid);
+    errdefer device.destroyPipeline(solid, null);
+    const translucent = try createPipeline(device, assets, layout, color_format, depth_format, .translucent);
+    errdefer device.destroyPipeline(translucent, null);
 
     const descriptor_pool = try device.createDescriptorPool(&.{
         .max_sets = @intCast(frame_count),
@@ -107,7 +112,7 @@ pub fn init(device: vk.DeviceProxy, memory: VkMemory, assets: *const Assets, sky
         .set_layout = set_layout,
         .descriptor_pool = descriptor_pool,
         .layout = layout,
-        .pipeline = pipeline,
+        .pipelines = .init(.{ .solid = solid, .translucent = translucent }),
         .frame_count = frame_count,
     };
 
@@ -163,7 +168,7 @@ pub fn init(device: vk.DeviceProxy, memory: VkMemory, assets: *const Assets, sky
 pub fn deinit(self: *Self) void {
     for (self.scene_buffers[0..self.frame_count]) |*buffer| buffer.deinit();
     self.device.destroyDescriptorPool(self.descriptor_pool, null);
-    self.device.destroyPipeline(self.pipeline, null);
+    for (self.pipelines.values) |pipeline| self.device.destroyPipeline(pipeline, null);
     self.device.destroyPipelineLayout(self.layout, null);
     self.device.destroyDescriptorSetLayout(self.set_layout, null);
 }
@@ -173,10 +178,10 @@ pub fn setScene(self: *Self, frame: usize, scene: Scene) void {
     self.scene_buffers[frame].slice(Scene)[0] = scene;
 }
 
-/// Binds everything shared by the chunk draws. Expects to be inside a rendering scope.
-pub fn bind(self: *const Self, cmd: vk.CommandBuffer, frame: usize, extent: vk.Extent2D, arena: *const MeshArena) void {
+/// Binds everything shared by the chunk draws of `pass`. Expects to be inside a rendering scope.
+pub fn bind(self: *const Self, cmd: vk.CommandBuffer, frame: usize, extent: vk.Extent2D, arena: *const MeshArena, pass: Pass) void {
     const device = self.device;
-    device.cmdBindPipeline(cmd, .graphics, self.pipeline);
+    device.cmdBindPipeline(cmd, .graphics, self.pipelines.get(pass));
     device.cmdSetViewport(cmd, 0, &.{.{
         .x = 0,
         .y = 0,
@@ -198,7 +203,8 @@ pub fn drawChunk(self: *const Self, cmd: vk.CommandBuffer, origin: math.Vec3, ra
     self.device.cmdDrawIndexed(cmd, range.count / 4 * 6, 1, 0, @intCast(range.first), 0);
 }
 
-fn createPipeline(device: vk.DeviceProxy, assets: *const Assets, layout: vk.PipelineLayout, color_format: vk.Format, depth_format: vk.Format) !vk.Pipeline {
+fn createPipeline(device: vk.DeviceProxy, assets: *const Assets, layout: vk.PipelineLayout, color_format: vk.Format, depth_format: vk.Format, pass: Pass) !vk.Pipeline {
+    const translucent = pass == .translucent;
     const vertex_module = try loadShaderModule(device, assets, "voxel.vert");
     defer device.destroyShaderModule(vertex_module, null);
     const fragment_module = try loadShaderModule(device, assets, "voxel.frag");
@@ -218,7 +224,18 @@ fn createPipeline(device: vk.DeviceProxy, assets: *const Assets, layout: vk.Pipe
         .stage_count = 2,
         .p_stages = &.{
             .{ .stage = .{ .vertex_bit = true }, .module = vertex_module, .p_name = "main" },
-            .{ .stage = .{ .fragment_bit = true }, .module = fragment_module, .p_name = "main" },
+            .{
+                .stage = .{ .fragment_bit = true },
+                .module = fragment_module,
+                .p_name = "main",
+                // constant_id 0 in voxel.frag
+                .p_specialization_info = &.{
+                    .map_entry_count = 1,
+                    .p_map_entries = &.{.{ .constant_id = 0, .offset = 0, .size = @sizeOf(u32) }},
+                    .data_size = @sizeOf(u32),
+                    .p_data = &@as(u32, @intFromBool(translucent)),
+                },
+            },
         },
         .p_vertex_input_state = &.{
             .vertex_binding_description_count = 1,
@@ -245,7 +262,8 @@ fn createPipeline(device: vk.DeviceProxy, assets: *const Assets, layout: vk.Pipe
             .depth_clamp_enable = .false,
             .rasterizer_discard_enable = .false,
             .polygon_mode = .fill,
-            .cull_mode = .{ .back_bit = true },
+            // water surfaces are seen from below too
+            .cull_mode = .{ .back_bit = !translucent },
             .front_face = .counter_clockwise,
             .depth_bias_enable = .false,
             .depth_bias_constant_factor = 0,
@@ -262,7 +280,7 @@ fn createPipeline(device: vk.DeviceProxy, assets: *const Assets, layout: vk.Pipe
         },
         .p_depth_stencil_state = &.{
             .depth_test_enable = .true,
-            .depth_write_enable = .true,
+            .depth_write_enable = if (translucent) .false else .true,
             // reverse-Z: larger depth is closer
             .depth_compare_op = .greater,
             .depth_bounds_test_enable = .false,
@@ -277,9 +295,9 @@ fn createPipeline(device: vk.DeviceProxy, assets: *const Assets, layout: vk.Pipe
             .logic_op = .copy,
             .attachment_count = 1,
             .p_attachments = &.{.{
-                .blend_enable = .false,
-                .src_color_blend_factor = .one,
-                .dst_color_blend_factor = .zero,
+                .blend_enable = if (translucent) .true else .false,
+                .src_color_blend_factor = .src_alpha,
+                .dst_color_blend_factor = .one_minus_src_alpha,
                 .color_blend_op = .add,
                 .src_alpha_blend_factor = .one,
                 .dst_alpha_blend_factor = .zero,

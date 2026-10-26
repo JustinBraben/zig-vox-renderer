@@ -15,6 +15,8 @@ pub const BlockId = enum(u8) {
     clay,
     cobblestone,
     planks,
+    water,
+    glass,
     _,
 
     /// Every named block except air, in declaration order (the player's block palette).
@@ -25,8 +27,47 @@ pub const BlockId = enum(u8) {
         break :blk list;
     };
 
+    pub const Layer = enum {
+        /// not drawn
+        none,
+        /// a full cube that hides whatever is behind it
+        opaque_cube,
+        /// fully opaque or fully clear texels (leaves), drawn with the opaque blocks
+        cutout,
+        /// blended, drawn after everything opaque
+        translucent,
+    };
+
+    pub fn layer(self: BlockId) Layer {
+        return switch (self) {
+            .air => .none,
+            .leaves => .cutout,
+            .water, .glass => .translucent,
+            else => .opaque_cube,
+        };
+    }
+
+    /// Hides the faces of blocks next to it, and darkens their corners (ambient occlusion).
     pub fn isOpaque(self: BlockId) bool {
-        return self != .air;
+        return self.layer() == .opaque_cube;
+    }
+
+    /// Blocks movement.
+    pub fn isSolid(self: BlockId) bool {
+        return self != .air and self != .water;
+    }
+
+    /// Can be targeted (broken, built against); rays pass through the rest.
+    pub fn isTargetable(self: BlockId) bool {
+        return self != .air and self != .water;
+    }
+
+    /// Whether the face of `self` towards `neighbor` is drawn.
+    pub fn faceVisible(self: BlockId, neighbor: BlockId) bool {
+        if (neighbor.isOpaque()) return false;
+        // no inner surfaces in a body of water or a glass wall; leaves keep theirs so
+        // a canopy doesn't look hollow through its gaps
+        return neighbor != self or self.layer() != .translucent;
     }
 
     /// Texture tile per face in mesher order (+X, -X, +Y, -Y, +Z, -Z), or null to draw
@@ -45,6 +86,8 @@ pub const BlockId = enum(u8) {
             .clay => all(.clay),
             .cobblestone => all(.cobblestone),
             .planks => all(.planks),
+            .water => all(.water),
+            .glass => all(.glass),
             _ => null,
         };
     }
@@ -65,6 +108,8 @@ pub const BlockId = enum(u8) {
             .clay => rgb(0x9f, 0xa4, 0xb0),
             .cobblestone => rgb(0x6c, 0x6c, 0x6c),
             .planks => rgb(0xb0, 0x8c, 0x56),
+            .water => rgb(0x3a, 0x6e, 0xc8),
+            .glass => rgb(0xc8, 0xe0, 0xf0),
             _ => rgb(0xff, 0x00, 0xff),
         };
     }

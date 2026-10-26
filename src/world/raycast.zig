@@ -1,5 +1,5 @@
 //! Voxel ray traversal (Amanatides & Woo): walks every block a ray passes through,
-//! in order, and reports the first non-air one.
+//! in order, and reports the first targetable one (see `BlockId.isTargetable`).
 
 const std = @import("std");
 const BlockId = @import("block.zig").BlockId;
@@ -18,7 +18,7 @@ pub const Hit = struct {
     }
 };
 
-/// First non-air block along `dir` (normalized) within `max_dist` of `origin`.
+/// First targetable block along `dir` (normalized) within `max_dist` of `origin`.
 /// `world.getBlock(x, y, z) ?BlockId` returning null (not loaded) ends the ray.
 pub fn cast(world: anytype, origin: @Vector(3, f64), dir: math.Vec3, max_dist: f32) ?Hit {
     var cell: [3]i32 = undefined;
@@ -49,7 +49,7 @@ pub fn cast(world: anytype, origin: @Vector(3, f64), dir: math.Vec3, max_dist: f
     var distance: f32 = 0;
     while (true) {
         const id = world.getBlock(cell[0], cell[1], cell[2]) orelse return null;
-        if (id != .air) return .{ .block = cell, .normal = normal, .id = id, .distance = distance };
+        if (id.isTargetable()) return .{ .block = cell, .normal = normal, .id = id, .distance = distance };
 
         // advance across the nearest block boundary
         const axis: usize = if (t_max[0] < t_max[1])

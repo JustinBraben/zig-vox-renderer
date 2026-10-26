@@ -320,8 +320,12 @@ pub fn sample(terrain: *const Terrain, key: Key, cells: *Grid, blocks: *Surface)
             const bz = z0 + (@as(i32, @intCast(gz)) - 1) * scale + @divFloor(scale, 2);
             var h = terrain.height(bx, bz);
             var surface = Terrain.surfaceBlock(h);
-            // dense forest reads as a raised canopy instead of the grass under it
-            if (surface == .grass and terrain.forestCover(bx, bz) > forest_cover) {
+            if (h < Terrain.sea_level) {
+                // the sea surface, drawn opaque at this distance
+                h = Terrain.sea_level;
+                surface = .water;
+            } else if (surface == .grass and terrain.forestCover(bx, bz) > forest_cover) {
+                // dense forest reads as a raised canopy instead of the grass under it
                 h += canopy_blocks;
                 surface = .leaves;
             }

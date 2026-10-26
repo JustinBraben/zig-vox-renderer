@@ -79,7 +79,7 @@ fn texel(tile: Tile, x: i32, y: i32) Rgba {
         .water => blk: {
             const wave = valueNoise(seed, x, y, 2, 4);
             const f = 0.85 + 0.25 * wave;
-            var c = shade(rgb(0x3a, 0x6e, 0xc8), f);
+            var c = shade(BlockId.water.color(), f);
             c[3] = 170;
             break :blk c;
         },

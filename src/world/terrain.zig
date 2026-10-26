@@ -14,7 +14,8 @@ seed: u64,
 pub const sea_level = 24;
 pub const snow_line = 92;
 
-/// Surface height (y of the top solid block) of the column at (x, z).
+/// Surface height (y of the top solid block) of the column at (x, z). Columns below
+/// `sea_level` are flooded up to it.
 pub fn height(self: Self, x: i32, z: i32) i32 {
     const fx: f32 = @floatFromInt(x);
     const fz: f32 = @floatFromInt(z);
@@ -68,7 +69,7 @@ pub const Content = union(enum) {
 /// What the chunk at height `chunk_y` of `map`'s column contains, without generating it.
 pub fn classify(chunk_y: i32, map: *const Heightmap) Content {
     const y0 = chunk_y * chunk.size;
-    if (y0 > map.top) return .{ .uniform = .air };
+    if (y0 > @max(map.top, sea_level)) return .{ .uniform = .air };
     // blocks at least `stone_depth` below the surface are always stone
     if (y0 + chunk.size - 1 <= map.min - stone_depth) return .{ .uniform = .stone };
     return .mixed;
@@ -86,7 +87,7 @@ pub fn fill(self: Self, chunk_y: i32, map: *const Heightmap, blocks: *chunk.Bloc
         }
     }
 
-    // trees only grow into air, so a canopy never cuts into a neighboring hillside
+    // trees only grow into air, so a canopy never cuts into a neighboring hillside (or the sea)
     const lo: @Vector(3, i32) = .{ map.x, y0, map.z };
     const hi = lo + @as(@Vector(3, i32), @splat(chunk.size - 1));
     for (map.trees[0..map.tree_count]) |t| {
@@ -127,7 +128,7 @@ pub fn surfaceBlock(surface: i32) BlockId {
 const stone_depth = 10;
 
 fn blockAt(y: i32, surface: i32) BlockId {
-    if (y > surface) return .air;
+    if (y > surface) return if (y <= sea_level) .water else .air;
     const beach = surface <= sea_level + 1;
     if (y == surface) {
         if (beach) return .sand;
@@ -395,4 +396,18 @@ test "trees grow on grass and match the per-block function" {
     }
     try std.testing.expect(logs > 0);
     try std.testing.expect(leaves > logs);
+}
+
+test "low ground is flooded up to sea level" {
+    const terrain: Self = .{ .seed = 7 };
+    // find a column under the sea
+    var x: i32 = 0;
+    while (terrain.height(x, 0) >= sea_level) : (x += 1) {
+        if (x > 100_000) return error.SkipZigTest;
+    }
+    const h = terrain.height(x, 0);
+    try std.testing.expectEqual(BlockId.sand, terrain.block(x, h, 0));
+    try std.testing.expectEqual(BlockId.water, terrain.block(x, h + 1, 0));
+    try std.testing.expectEqual(BlockId.water, terrain.block(x, sea_level, 0));
+    try std.testing.expectEqual(BlockId.air, terrain.block(x, sea_level + 1, 0));
 }
