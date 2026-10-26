@@ -17,6 +17,7 @@ const Assets = @import("assets.zig");
 const World = @import("world/world.zig");
 const Lod = @import("world/lod.zig");
 const BlockId = @import("world/block.zig").BlockId;
+const Tile = @import("world/block.zig").Tile;
 const raycast = @import("world/raycast.zig");
 const Player = @import("player.zig");
 const Camera = @import("camera.zig");
@@ -80,15 +81,15 @@ pub fn main(init: std.process.Init) !void {
     const audio_sample_path = "./assets/audio/MouthPop_AP1.1188.wav";
 
     if (!c.SDL_LoadWAV(audio_sample_path, &wave_spec, &wave_sound, &wave_soundlen)) {
-        log.err("SDL_LoadWAV failed: {s}, with file: {s}", .{c.SDL_GetError(), audio_sample_path});
+        log.err("SDL_LoadWAV failed: {s}, with file: {s}", .{ c.SDL_GetError(), audio_sample_path });
         return error.SdlAudioFailed;
     }
     defer c.SDL_free(@ptrCast(wave_sound));
 
     stream = c.SDL_OpenAudioDeviceStream(
-        c.SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, 
-        &wave_spec, 
-        null, 
+        c.SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
+        &wave_spec,
+        null,
         null,
     ) orelse {
         log.err("Failed to open audio stream: {s}", .{c.SDL_GetError()});
@@ -129,15 +130,19 @@ pub fn main(init: std.process.Init) !void {
     }, null);
     defer device.destroyCommandPool(command_pool, null);
 
-    var sky_texture = try loadSkybox(&assets, .{
+    const uploader: Texture.Uploader = .{
         .device = device,
         .memory = memory,
         .queue = ctx.graphics_queue,
         .command_pool = command_pool,
-    });
+    };
+    var sky_texture = try loadSkybox(&assets, uploader);
     defer sky_texture.deinit();
 
-    var voxel = try VoxelPipeline.init(device, memory, &assets, &sky_texture, swapchain.surface_format.format, DepthBuffer.format, frames_in_flight);
+    var block_textures = try loadBlockTextures(&assets, uploader);
+    defer block_textures.deinit();
+
+    var voxel = try VoxelPipeline.init(device, memory, &assets, &sky_texture, &block_textures, swapchain.surface_format.format, DepthBuffer.format, frames_in_flight);
     defer voxel.deinit();
 
     var sky_pipeline = try SkyPipeline.init(device, &assets, &voxel, swapchain.surface_format.format, DepthBuffer.format);
@@ -570,6 +575,12 @@ fn loadSkybox(assets: *const Assets, uploader: Texture.Uploader) !Texture {
         loaded += 1;
     }
     return Texture.initCube(uploader, faces);
+}
+
+fn loadBlockTextures(assets: *const Assets, uploader: Texture.Uploader) !Texture {
+    const atlas = try assets.read("textures/blocks.png");
+    defer assets.gpa.free(atlas);
+    return Texture.initAtlas(uploader, atlas, 16, Tile.count);
 }
 
 fn playerInput(settings: *const Settings) Player.Input {

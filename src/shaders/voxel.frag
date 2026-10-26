@@ -11,11 +11,15 @@ layout(set = 0, binding = 0) uniform Scene {
 } scene;
 
 layout(set = 0, binding = 1) uniform samplerCube sky;
+// block textures, one layer per tile (sRGB, so samples are linear)
+layout(set = 0, binding = 2) uniform sampler2DArray blocks;
 
 layout(location = 0) in vec3 v_rel_pos;
 layout(location = 1) in vec3 v_normal;
 layout(location = 2) in vec3 v_color;
 layout(location = 3) in float v_ao;
+layout(location = 4) in vec2 v_uv;
+layout(location = 5) flat in uint v_layer;
 
 layout(location = 0) out vec4 out_color;
 
@@ -30,6 +34,12 @@ vec3 linearToSrgb(vec3 c) {
 
 void main() {
     vec3 albedo = srgbToLinear(v_color);
+    if (v_layer != 255u) {
+        vec4 texel = texture(blocks, vec3(v_uv, float(v_layer)));
+        // all blocks are drawn opaque for now: see-through texels (leaf gaps) show a dark
+        // shade of the block's color
+        albedo = mix(albedo * 0.25, texel.rgb, texel.a);
+    }
     vec3 n = normalize(v_normal);
 
     float sun = max(dot(n, scene.sun_dir.xyz), 0.0);

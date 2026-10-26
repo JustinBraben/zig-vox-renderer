@@ -37,6 +37,105 @@ pub fn initCube(up: Uploader, faces: [6][]const u8) !Self {
     return init(up, &faces, true);
 }
 
+/// 2D array from an encoded atlas of `tile`×`tile` tiles, one layer per tile, read left
+/// to right and top to bottom; only the first `count` tiles are used. Mipmapped down to
+/// 1×1 and sampled with nearest magnification, for pixel-art block textures.
+pub fn initAtlas(up: Uploader, encoded: []const u8, tile: u32, count: u32) !Self {
+    std.debug.assert(std.math.isPowerOfTwo(tile));
+    var atlas = try Decoded.init(encoded);
+    defer atlas.deinit();
+    const columns = atlas.width / tile;
+    if (columns * (atlas.height / tile) < count) return error.AtlasTooSmall;
+
+    const levels = std.math.log2_int(u32, tile) + 1;
+    var size: usize = 0;
+    for (0..levels) |level| size += mipSize(tile, level) * count;
+
+    var staging = try Buffer.init(up.device, up.memory, size, .{ .transfer_src_bit = true }, .host_visible);
+    defer staging.deinit();
+    const dst = staging.slice(u8);
+
+    // level 0: copy each tile into its layer; each further level: 2×2 box filter of the previous one
+    var regions: [16]vk.BufferImageCopy = undefined;
+    std.debug.assert(levels <= regions.len);
+    var offset: usize = 0;
+    for (0..levels) |level| {
+        const dim = tile >> @intCast(level);
+        const layer_size = mipSize(tile, level);
+        for (0..count) |layer| {
+            const out = dst[offset + layer * layer_size ..][0..layer_size];
+            if (level == 0) {
+                const tx = (layer % columns) * tile;
+                const ty = (layer / columns) * tile;
+                for (0..tile) |y| {
+                    const row = atlas.pixels[((ty + y) * atlas.width + tx) * 4 ..][0 .. tile * 4];
+                    @memcpy(out[y * tile * 4 ..][0 .. tile * 4], row);
+                }
+            } else {
+                const prev_size = mipSize(tile, level - 1);
+                const prev = dst[offset - prev_size * count + layer * prev_size ..][0..prev_size];
+                downsample(prev, out, dim);
+            }
+        }
+        regions[level] = .{
+            .buffer_offset = offset,
+            .buffer_row_length = 0,
+            .buffer_image_height = 0,
+            .image_subresource = .{ .aspect_mask = .{ .color_bit = true }, .mip_level = @intCast(level), .base_array_layer = 0, .layer_count = count },
+            .image_offset = .{ .x = 0, .y = 0, .z = 0 },
+            .image_extent = .{ .width = dim, .height = dim, .depth = 1 },
+        };
+        offset += layer_size * count;
+    }
+
+    return create(up, staging.handle, regions[0..levels], .{
+        .width = tile,
+        .height = tile,
+        .layers = count,
+        .levels = levels,
+        .cube = false,
+        .mag_filter = .nearest,
+        .address_mode = .repeat,
+    });
+}
+
+/// Bytes in one layer of mip `level`.
+fn mipSize(tile: u32, level: usize) usize {
+    const dim: usize = tile >> @intCast(level);
+    return dim * dim * 4;
+}
+
+/// Halves `src` (2·`dim` square) into `dst` (`dim` square), averaging in linear light and
+/// weighting color by alpha so transparent texels don't darken their neighbors.
+fn downsample(src: []const u8, dst: []u8, dim: u32) void {
+    const src_dim = dim * 2;
+    for (0..dim) |y| {
+        for (0..dim) |x| {
+            var rgb: [3]f32 = .{ 0, 0, 0 };
+            var alpha: f32 = 0;
+            for ([_][2]usize{ .{ 0, 0 }, .{ 1, 0 }, .{ 0, 1 }, .{ 1, 1 } }) |d| {
+                const p = src[((y * 2 + d[1]) * src_dim + x * 2 + d[0]) * 4 ..][0..4];
+                const a = @as(f32, @floatFromInt(p[3])) / 255;
+                for (&rgb, p[0..3]) |*sum, c| sum.* += srgbToLinear(c) * a;
+                alpha += a;
+            }
+            const out = dst[(y * dim + x) * 4 ..][0..4];
+            for (out[0..3], rgb) |*c, sum| c.* = if (alpha > 0) linearToSrgb(sum / alpha) else 0;
+            out[3] = @intFromFloat(@round(alpha / 4 * 255));
+        }
+    }
+}
+
+fn srgbToLinear(c: u8) f32 {
+    const f = @as(f32, @floatFromInt(c)) / 255;
+    return if (f <= 0.04045) f / 12.92 else std.math.pow(f32, (f + 0.055) / 1.055, 2.4);
+}
+
+fn linearToSrgb(f: f32) u8 {
+    const s = if (f <= 0.0031308) f * 12.92 else 1.055 * std.math.pow(f32, f, 1.0 / 2.4) - 0.055;
+    return @intFromFloat(@round(std.math.clamp(s, 0, 1) * 255));
+}
+
 pub fn deinit(self: *Self) void {
     self.device.destroySampler(self.sampler, null);
     self.device.destroyImageView(self.view, null);
@@ -71,13 +170,46 @@ fn init(up: Uploader, layers: []const []const u8, cube: bool) !Self {
         @memcpy(dst[i * layer_size ..][0..layer_size], decoded.pixels);
     }
 
+    const region: vk.BufferImageCopy = .{
+        .buffer_offset = 0,
+        .buffer_row_length = 0,
+        .buffer_image_height = 0,
+        .image_subresource = .{ .aspect_mask = .{ .color_bit = true }, .mip_level = 0, .base_array_layer = 0, .layer_count = @intCast(layers.len) },
+        .image_offset = .{ .x = 0, .y = 0, .z = 0 },
+        .image_extent = .{ .width = width, .height = height, .depth = 1 },
+    };
+    return create(up, staging.handle, &.{region}, .{
+        .width = width,
+        .height = height,
+        .layers = @intCast(layers.len),
+        .levels = 1,
+        .cube = cube,
+        .mag_filter = .linear,
+        .address_mode = .clamp_to_edge,
+    });
+}
+
+const CreateOptions = struct {
+    width: u32,
+    height: u32,
+    layers: u32,
+    levels: u32,
+    cube: bool,
+    mag_filter: vk.Filter,
+    address_mode: vk.SamplerAddressMode,
+};
+
+/// Creates the image, fills it from `staging` with `regions` (which must cover every
+/// level and layer), and creates its view and sampler.
+fn create(up: Uploader, staging: vk.Buffer, regions: []const vk.BufferImageCopy, options: CreateOptions) !Self {
+    const device = up.device;
     const image = try device.createImage(&.{
-        .flags = .{ .cube_compatible_bit = cube },
+        .flags = .{ .cube_compatible_bit = options.cube },
         .image_type = .@"2d",
         .format = format,
-        .extent = .{ .width = width, .height = height, .depth = 1 },
-        .mip_levels = 1,
-        .array_layers = @intCast(layers.len),
+        .extent = .{ .width = options.width, .height = options.height, .depth = 1 },
+        .mip_levels = options.levels,
+        .array_layers = options.layers,
         .samples = .{ .@"1_bit" = true },
         .tiling = .optimal,
         .usage = .{ .transfer_dst_bit = true, .sampled_bit = true },
@@ -99,15 +231,15 @@ fn init(up: Uploader, layers: []const []const u8, cube: bool) !Self {
     const range: vk.ImageSubresourceRange = .{
         .aspect_mask = .{ .color_bit = true },
         .base_mip_level = 0,
-        .level_count = 1,
+        .level_count = options.levels,
         .base_array_layer = 0,
-        .layer_count = @intCast(layers.len),
+        .layer_count = options.layers,
     };
-    try copyToImage(up, staging.handle, image, .{ .width = width, .height = height, .depth = 1 }, range);
+    try copyToImage(up, staging, image, regions, range);
 
     const view = try device.createImageView(&.{
         .image = image,
-        .view_type = if (cube) .cube else .@"2d_array",
+        .view_type = if (options.cube) .cube else .@"2d_array",
         .format = format,
         .components = .{ .r = .identity, .g = .identity, .b = .identity, .a = .identity },
         .subresource_range = range,
@@ -115,38 +247,38 @@ fn init(up: Uploader, layers: []const []const u8, cube: bool) !Self {
     errdefer device.destroyImageView(view, null);
 
     const sampler = try device.createSampler(&.{
-        .mag_filter = .linear,
+        .mag_filter = options.mag_filter,
         .min_filter = .linear,
-        .mipmap_mode = .nearest,
-        .address_mode_u = .clamp_to_edge,
-        .address_mode_v = .clamp_to_edge,
-        .address_mode_w = .clamp_to_edge,
+        .mipmap_mode = if (options.levels > 1) .linear else .nearest,
+        .address_mode_u = options.address_mode,
+        .address_mode_v = options.address_mode,
+        .address_mode_w = options.address_mode,
         .mip_lod_bias = 0,
         .anisotropy_enable = .false,
         .max_anisotropy = 1,
         .compare_enable = .false,
         .compare_op = .always,
         .min_lod = 0,
-        .max_lod = 0,
+        .max_lod = @floatFromInt(options.levels - 1),
         .border_color = .int_opaque_black,
         .unnormalized_coordinates = .false,
     }, null);
 
-    log.info("uploaded {d}x{d}x{d} texture", .{ width, height, layers.len });
+    log.info("uploaded {d}x{d}x{d} texture ({d} mip levels)", .{ options.width, options.height, options.layers, options.levels });
     return .{
         .device = device,
         .image = image,
         .memory = memory,
         .view = view,
         .sampler = sampler,
-        .width = width,
-        .height = height,
+        .width = options.width,
+        .height = options.height,
     };
 }
 
-/// Copies tightly packed layers from `src` into `image` and leaves it ready for sampling.
+/// Copies `regions` of `src` into `image` and leaves `range` ready for sampling.
 /// Blocks until the GPU is done.
-fn copyToImage(up: Uploader, src: vk.Buffer, image: vk.Image, extent: vk.Extent3D, range: vk.ImageSubresourceRange) !void {
+fn copyToImage(up: Uploader, src: vk.Buffer, image: vk.Image, regions: []const vk.BufferImageCopy, range: vk.ImageSubresourceRange) !void {
     const device = up.device;
     var cmd: vk.CommandBuffer = undefined;
     try device.allocateCommandBuffers(&.{
@@ -172,19 +304,7 @@ fn copyToImage(up: Uploader, src: vk.Buffer, image: vk.Image, extent: vk.Extent3
             .subresource_range = range,
         }},
     });
-    device.cmdCopyBufferToImage(cmd, src, image, .transfer_dst_optimal, &.{.{
-        .buffer_offset = 0,
-        .buffer_row_length = 0,
-        .buffer_image_height = 0,
-        .image_subresource = .{
-            .aspect_mask = range.aspect_mask,
-            .mip_level = 0,
-            .base_array_layer = 0,
-            .layer_count = range.layer_count,
-        },
-        .image_offset = .{ .x = 0, .y = 0, .z = 0 },
-        .image_extent = extent,
-    }});
+    device.cmdCopyBufferToImage(cmd, src, image, .transfer_dst_optimal, regions);
     device.cmdPipelineBarrier2(cmd, &.{
         .image_memory_barrier_count = 1,
         .p_image_memory_barriers = &.{.{

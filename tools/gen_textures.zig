@@ -1,37 +1,20 @@
 //! Generates the block texture atlas (`assets/textures/blocks.png`) procedurally,
 //! so the repository only contains original art. Run with `zig build textures`.
 //!
-//! Tiles are 16×16, laid out left to right in `Tile` order, 16 per row. Every tile
-//! wraps seamlessly (noise lattices and cell points repeat at the tile size). Base
-//! colors come from `BlockId.color`, so textured blocks keep the current palette.
+//! Tiles are 16×16, laid out left to right in `Tile` order (src/world/block.zig), 16 per
+//! row. Every tile wraps seamlessly (noise lattices and cell points repeat at the tile
+//! size). Base colors come from `BlockId.color`, so textured blocks keep the current palette.
 
 const std = @import("std");
-const BlockId = @import("block").BlockId;
+const block = @import("block");
+const BlockId = block.BlockId;
 
 pub const tile_size = 16;
 pub const tiles_per_row = 16;
 
-/// Atlas order; the tile index is the enum value.
-pub const Tile = enum(u8) {
-    grass_top,
-    grass_side,
-    dirt,
-    stone,
-    sand,
-    gravel,
-    snow,
-    snow_side,
-    log_side,
-    log_top,
-    leaves,
-    clay,
-    cobblestone,
-    planks,
-    water,
-    glass,
-};
+const Tile = block.Tile;
 
-const tile_count = @typeInfo(Tile).@"enum".fields.len;
+const tile_count = Tile.count;
 const width = tile_size * tiles_per_row;
 const height = tile_size * ((tile_count + tiles_per_row - 1) / tiles_per_row);
 

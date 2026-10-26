@@ -7,7 +7,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const chunk = @import("chunk.zig");
-const BlockId = @import("block.zig").BlockId;
+const block_mod = @import("block.zig");
+const BlockId = block_mod.BlockId;
 
 pub const padded_size = chunk.size + 2;
 pub const Padded = [padded_size * padded_size * padded_size]BlockId;
@@ -19,7 +20,7 @@ pub fn paddedIndex(x: usize, y: usize, z: usize) usize {
 
 /// 8-byte packed vertex, decoded in voxel.vert.
 ///   data:  x:6 y:6 z:6 face:3 ao:2   (positions are chunk-local 0..32)
-///   color: RGBA8 sRGB
+///   color: RGB8 sRGB in the low 24 bits, texture layer in the top 8 (`untextured` = flat color)
 pub const Vertex = extern struct {
     data: u32,
     color: u32,
@@ -50,6 +51,29 @@ pub const faces = [6]Face{
     .{ .normal = .{ 0, 0, 1 }, .u = .{ 1, 0, 0 }, .v = .{ 0, 1, 0 } },
     .{ .normal = .{ 0, 0, -1 }, .u = .{ 0, 1, 0 }, .v = .{ 1, 0, 0 } },
 };
+
+/// Texture layer of a vertex drawn with its flat color (`BlockId.color` has alpha 0xff).
+pub const untextured = 0xff;
+
+/// Vertex `color` word of each block's faces, indexed by block id and face.
+const materials = blk: {
+    @setEvalBranchQuota(10_000);
+    var table: [256][6]u32 = undefined;
+    for (&table, 0..) |*block_faces, id| {
+        const block: BlockId = @enumFromInt(id);
+        const rgb = block.color() & 0xffffff;
+        for (block_faces, 0..) |*m, face| {
+            const layer: u32 = if (block.faceTiles()) |tiles| @intFromEnum(tiles[face]) else untextured;
+            m.* = rgb | layer << 24;
+        }
+    }
+    break :blk table;
+};
+
+/// The vertex `color` word for `face` of `block`.
+pub fn material(block: BlockId, face: usize) u32 {
+    return materials[@intFromEnum(block)][face];
+}
 
 pub const corner_uv = [4][2]i32{ .{ 0, 0 }, .{ 1, 0 }, .{ 1, 1 }, .{ 0, 1 } };
 
@@ -94,12 +118,12 @@ pub fn meshChunk(allocator: Allocator, padded: *const Padded, out: *std.ArrayLis
             for (1..chunk.size + 1) |x| {
                 const block = padded[paddedIndex(x, y, z)];
                 if (!block.isOpaque()) continue;
-                const color = block.color();
+                const block_materials = &materials[@intFromEnum(block)];
                 const origin = paddedIndex(x - 1, y - 1, z - 1);
                 const packed_pos = Vertex.init(@intCast(x - 1), @intCast(y - 1), @intCast(z - 1), 0, 0, 0).data;
                 try out.ensureUnusedCapacity(allocator, 6 * 4);
 
-                inline for (face_tables) |t| {
+                inline for (face_tables, 0..) |t, face_index| {
                     if (!padded[origin + t.front].isOpaque()) {
                         var ao: [4]u32 = undefined;
                         inline for (&ao, t.ao) |*corner_ao, n| {
@@ -111,7 +135,7 @@ pub fn meshChunk(allocator: Allocator, padded: *const Padded, out: *std.ArrayLis
                         const quad = out.addManyAsArrayAssumeCapacity(4);
                         for (quad, 0..) |*vertex, i| {
                             const ci = (i + rotate) % 4;
-                            vertex.* = .{ .data = (packed_pos + t.vertex[ci]) | (ao[ci] << 21), .color = color };
+                            vertex.* = .{ .data = (packed_pos + t.vertex[ci]) | (ao[ci] << 21), .color = block_materials[face_index] };
                         }
                     }
                 }
@@ -250,7 +274,7 @@ fn meshChunkReference(allocator: Allocator, padded: *const Padded, out: *std.Arr
                         const ci = (i + rotate) % 4;
                         const uv = corner_uv[ci];
                         const pos = add(add(base, scale(face.u, uv[0])), scale(face.v, uv[1]));
-                        try out.append(allocator, .init(@intCast(pos[0]), @intCast(pos[1]), @intCast(pos[2]), @intCast(face_index), ao[ci], block.color()));
+                        try out.append(allocator, .init(@intCast(pos[0]), @intCast(pos[1]), @intCast(pos[2]), @intCast(face_index), ao[ci], material(block, face_index)));
                     }
                 }
             }
@@ -274,4 +298,24 @@ test "table-driven mesher matches the reference on a random volume" {
 
     try testing.expect(expected.items.len > 1000);
     try testing.expectEqualSlices(Vertex, expected.items, actual.items);
+}
+
+test "faces get their block's texture layers" {
+    const padded = try emptyVolume();
+    defer testing.allocator.destroy(padded);
+    set(padded, 5, 5, 5, .grass);
+
+    var out: std.ArrayList(Vertex) = .empty;
+    defer out.deinit(testing.allocator);
+    try meshChunk(testing.allocator, padded, &out);
+    for (out.items) |v| {
+        const face = (v.data >> 18) & 7;
+        const expected: block_mod.Tile = switch (face) {
+            2 => .grass_top,
+            3 => .dirt,
+            else => .grass_side,
+        };
+        try testing.expectEqual(@as(u32, @intFromEnum(expected)), v.color >> 24);
+        try testing.expectEqual(BlockId.grass.color() & 0xffffff, v.color & 0xffffff);
+    }
 }

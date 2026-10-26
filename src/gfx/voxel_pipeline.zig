@@ -1,6 +1,6 @@
 //! Opaque voxel pipeline: packed chunk vertices, depth tested (reverse-Z),
 //! lit by a per-frame scene uniform buffer. Its descriptor sets also hold the sky
-//! cubemap (binding 1), shared with the sky pipeline.
+//! cubemap (binding 1), shared with the sky pipeline, and the block textures (binding 2).
 
 const std = @import("std");
 
@@ -49,11 +49,11 @@ scene_buffers: [max_frames]Buffer = undefined,
 descriptor_sets: [max_frames]vk.DescriptorSet = undefined,
 frame_count: usize,
 
-pub fn init(device: vk.DeviceProxy, memory: VkMemory, assets: *const Assets, sky: *const Texture, color_format: vk.Format, depth_format: vk.Format, frame_count: usize) !Self {
+pub fn init(device: vk.DeviceProxy, memory: VkMemory, assets: *const Assets, sky: *const Texture, blocks: *const Texture, color_format: vk.Format, depth_format: vk.Format, frame_count: usize) !Self {
     std.debug.assert(frame_count <= max_frames);
 
     const set_layout = try device.createDescriptorSetLayout(&.{
-        .binding_count = 2,
+        .binding_count = 3,
         .p_bindings = &.{
             .{
                 .binding = 0,
@@ -63,6 +63,12 @@ pub fn init(device: vk.DeviceProxy, memory: VkMemory, assets: *const Assets, sky
             },
             .{
                 .binding = 1,
+                .descriptor_type = .combined_image_sampler,
+                .descriptor_count = 1,
+                .stage_flags = .{ .fragment_bit = true },
+            },
+            .{
+                .binding = 2,
                 .descriptor_type = .combined_image_sampler,
                 .descriptor_count = 1,
                 .stage_flags = .{ .fragment_bit = true },
@@ -91,7 +97,7 @@ pub fn init(device: vk.DeviceProxy, memory: VkMemory, assets: *const Assets, sky
         .pool_size_count = 2,
         .p_pool_sizes = &.{
             .{ .type = .uniform_buffer, .descriptor_count = @intCast(frame_count) },
-            .{ .type = .combined_image_sampler, .descriptor_count = @intCast(frame_count) },
+            .{ .type = .combined_image_sampler, .descriptor_count = @intCast(frame_count * 2) },
         },
     }, null);
     errdefer device.destroyDescriptorPool(descriptor_pool, null);
@@ -135,6 +141,16 @@ pub fn init(device: vk.DeviceProxy, memory: VkMemory, assets: *const Assets, sky
                 .descriptor_count = 1,
                 .descriptor_type = .combined_image_sampler,
                 .p_image_info = &.{.{ .sampler = sky.sampler, .image_view = sky.view, .image_layout = .shader_read_only_optimal }},
+                .p_buffer_info = &.{},
+                .p_texel_buffer_view = &.{},
+            },
+            .{
+                .dst_set = self.descriptor_sets[i],
+                .dst_binding = 2,
+                .dst_array_element = 0,
+                .descriptor_count = 1,
+                .descriptor_type = .combined_image_sampler,
+                .p_image_info = &.{.{ .sampler = blocks.sampler, .image_view = blocks.view, .image_layout = .shader_read_only_optimal }},
                 .p_buffer_info = &.{},
                 .p_texel_buffer_view = &.{},
             },

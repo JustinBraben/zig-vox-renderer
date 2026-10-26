@@ -29,7 +29,28 @@ pub const BlockId = enum(u8) {
         return self != .air;
     }
 
-    /// sRGB albedo, packed as RGBA8 (R in the low byte).
+    /// Texture tile per face in mesher order (+X, -X, +Y, -Y, +Z, -Z), or null to draw
+    /// the block with its flat `color`.
+    pub fn faceTiles(self: BlockId) ?[6]Tile {
+        return switch (self) {
+            .air => null,
+            .grass => sided(.grass_side, .grass_top, .dirt),
+            .dirt => all(.dirt),
+            .stone => all(.stone),
+            .sand => all(.sand),
+            .gravel => all(.gravel),
+            .snow => all(.snow),
+            .log => sided(.log_side, .log_top, .log_top),
+            .leaves => all(.leaves),
+            .clay => all(.clay),
+            .cobblestone => all(.cobblestone),
+            .planks => all(.planks),
+            _ => null,
+        };
+    }
+
+    /// sRGB albedo, packed as RGBA8 (R in the low byte). Textured blocks use it where
+    /// textures aren't drawn (distant terrain).
     pub fn color(self: BlockId) u32 {
         return switch (self) {
             .air => 0,
@@ -48,6 +69,37 @@ pub const BlockId = enum(u8) {
         };
     }
 };
+
+/// Tiles of `assets/textures/blocks.png` in atlas order (left to right, 16 per row);
+/// the atlas is generated from this list by tools/gen_textures.zig.
+pub const Tile = enum(u8) {
+    grass_top,
+    grass_side,
+    dirt,
+    stone,
+    sand,
+    gravel,
+    snow,
+    snow_side,
+    log_side,
+    log_top,
+    leaves,
+    clay,
+    cobblestone,
+    planks,
+    water,
+    glass,
+
+    pub const count = @typeInfo(Tile).@"enum".fields.len;
+};
+
+fn all(tile: Tile) [6]Tile {
+    return @splat(tile);
+}
+
+fn sided(side: Tile, top: Tile, bottom: Tile) [6]Tile {
+    return .{ side, side, top, bottom, side, side };
+}
 
 fn rgb(r: u8, g: u8, b: u8) u32 {
     return @as(u32, r) | @as(u32, g) << 8 | @as(u32, b) << 16 | 0xff << 24;
