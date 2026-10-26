@@ -77,6 +77,25 @@ pub fn build(b: *std.Build) !void {
         .install_subdir = "assets/textures",
     });
 
+    // `zig build textures` regenerates the block atlas from tools/gen_textures.zig
+    const gen_textures = b.addExecutable(.{
+        .name = "gen_textures",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/gen_textures.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+            .imports = &.{
+                .{ .name = "block", .module = b.createModule(.{ .root_source_file = b.path("src/world/block.zig") }) },
+            },
+        }),
+    });
+    const gen_textures_run = b.addRunArtifact(gen_textures);
+    const atlas = gen_textures_run.addOutputFileArg("blocks.png");
+    const update_atlas = b.addUpdateSourceFiles();
+    update_atlas.addCopyFileToSource(atlas, "assets/textures/blocks.png");
+    const textures_step = b.step("textures", "Regenerate assets/textures/blocks.png");
+    textures_step.dependOn(&update_atlas.step);
+
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| run_cmd.addArgs(args);

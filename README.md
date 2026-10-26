@@ -29,3 +29,5 @@ Click the world to capture the mouse, Esc releases it for the debug UI.
 Run `zig build run -- --bench[=render_distance]` to measure world loading and frame times.
 
 Shaders and textures are loaded at startup from an `assets/` folder next to the executable. `zig build` installs it to `zig-out/bin/assets` (compiled shaders in `shaders/`, a copy of `assets/textures` in `textures/`), so keep that folder with the executable when moving it.
+
+The block atlas `assets/textures/blocks.png` is generated procedurally by `tools/gen_textures.zig`; run `zig build textures` to regenerate it after changing the generator.
