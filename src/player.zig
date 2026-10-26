@@ -90,7 +90,6 @@ pub fn intersectsBlock(self: *const Self, x: i32, y: i32, z: i32) bool {
 
 pub fn setFlying(self: *Self, flying: bool) void {
     self.flying = flying;
-    self.velocity = .{ 0, 0, 0 };
     self.on_ground = false;
 }
 

@@ -124,7 +124,7 @@ pub fn surfaceBlock(surface: i32) BlockId {
     return blockAt(surface, surface);
 }
 
-const stone_depth = 6;
+const stone_depth = 10;
 
 fn blockAt(y: i32, surface: i32) BlockId {
     if (y > surface) return .air;
@@ -132,7 +132,7 @@ fn blockAt(y: i32, surface: i32) BlockId {
     if (y == surface) {
         if (beach) return .sand;
         if (surface >= snow_line) return .snow;
-        if (surface >= snow_line - 6) return .stone;
+        if (surface >= snow_line - stone_depth) return .stone;
         return .grass;
     }
     if (y > surface - 4) return if (beach) .sand else .dirt;
