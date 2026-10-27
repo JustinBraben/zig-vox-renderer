@@ -193,6 +193,7 @@ pub fn main(init: std.process.Init) !void {
 
     var world = try World.init(gpa, init.io, settings.seed);
     defer world.deinit();
+    world.startWorkers(World.defaultWorkerCount());
     var lod = Lod.init(gpa, init.io);
     defer lod.deinit();
 
@@ -550,7 +551,7 @@ const Bench = struct {
             return false;
         };
         if (self.frames == 0 and self.load_ms == 0) {
-            const loading = stats.pending > 0 or stats.generated_this_frame > 0 or stats.meshed_this_frame > 0 or lod.pending > 0 or lod.built_this_frame > 0;
+            const loading = stats.pending > 0 or stats.gen_jobs > 0 or stats.mesh_jobs > 0 or stats.generated_this_frame > 0 or stats.meshed_this_frame > 0 or lod.pending > 0 or lod.built_this_frame > 0;
             if (loading) return false;
             self.load_ms = @as(f64, @floatFromInt(now_ns - start)) / std.time.ns_per_ms;
             return false;

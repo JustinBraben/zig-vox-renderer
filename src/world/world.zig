@@ -10,6 +10,7 @@ const ChunkPos = chunk.ChunkPos;
 const BlockId = @import("block.zig").BlockId;
 const mesher = @import("mesher.zig");
 const light = @import("light.zig");
+const Pool = @import("workers.zig");
 const Terrain = @import("terrain.zig");
 const math = @import("../math.zig");
 const MeshArena = @import("../gfx/mesh_arena.zig");
@@ -26,7 +27,9 @@ pub const Config = struct {
     /// vertical chunk range that is meshed and drawn
     min_y: i32,
     max_y: i32,
+    /// chunks added to the world per frame (whole columns)
     gen_budget: u32,
+    /// mesh jobs started per frame
     mesh_budget: u32,
 };
 
@@ -44,13 +47,18 @@ pub const Stats = struct {
     generated_this_frame: u32 = 0,
     meshed_this_frame: u32 = 0,
     arena_full: bool = false,
+    workers: u32 = 0,
+    /// columns being generated (or waiting to be added) and chunks being meshed
+    gen_jobs: u32 = 0,
+    mesh_jobs: u32 = 0,
 
-    // CPU time spent this frame
+    // main thread time spent this frame
     update_ms: f32 = 0,
     gen_ms: f32 = 0,
     mesh_ms: f32 = 0,
     draw_ms: f32 = 0,
-    // totals since the last regenerate, for per-chunk averages
+    // totals since the last regenerate, for per-chunk averages; including the time
+    // spent on the workers
     gen_total: u64 = 0,
     gen_total_ns: u64 = 0,
     mesh_total: u64 = 0,
@@ -68,11 +76,28 @@ heightmaps: std.AutoHashMapUnmanaged([2]i32, *Terrain.Heightmap) = .empty,
 /// column offsets within `offsets_radius + 2`, nearest first
 offsets: std.ArrayList([2]i32) = .empty,
 offsets_radius: i32 = -1,
-padded: *mesher.Padded,
-padded_light: *mesher.PaddedLight,
 mesh_options: mesher.Options = .{},
-meshes: mesher.Output = .{},
 light_queues: *light.Queues,
+/// worker threads generating and meshing chunks
+pool: *Pool,
+/// for jobs run on the main thread (without workers, or while waiting for edits)
+main_context: Pool.Context,
+/// every job ever allocated, and the ones not in use
+gen_jobs: std.ArrayList(*GenJob) = .empty,
+mesh_jobs: std.ArrayList(*MeshJob) = .empty,
+free_gen_jobs: std.ArrayList(*GenJob) = .empty,
+free_mesh_jobs: std.ArrayList(*MeshJob) = .empty,
+finished_jobs: std.ArrayList(*Pool.Job) = .empty,
+/// generated columns waiting to be added to the world, oldest first
+ready_columns: std.ArrayList(*GenJob) = .empty,
+/// columns being generated or waiting in `ready_columns`
+columns_in_flight: ColumnSet = .empty,
+gen_in_flight: u32 = 0,
+mesh_in_flight: u32 = 0,
+/// identifies mesh jobs (`Chunk.mesh_job`); 0 is none
+next_job_id: u64 = 1,
+/// bumped by `regenerate`, so columns generated before it are dropped
+epoch: u32 = 0,
 /// translucent chunk draws of the frame, sorted back to front
 translucent_draws: std.ArrayList(TranslucentDraw) = .empty,
 scratch_keys: std.ArrayList(ChunkPos) = .empty,
@@ -93,22 +118,127 @@ const TranslucentDraw = struct {
     range: chunk.MeshRange,
 };
 
+/// Generates the chunks of a column, top down, and lights them (`light.initColumn`).
+const GenJob = struct {
+    job: Pool.Job = .{ .run = run },
+    terrain: Terrain,
+    epoch: u32,
+    column: [2]i32,
+    /// chunk y range
+    top: i32,
+    bottom: i32,
+    map: *Terrain.Heightmap,
+    /// top to bottom; owned by the job until added to the world
+    chunks: std.ArrayList(*Chunk) = .empty,
+    err: ?anyerror = null,
+    ns: u64 = 0,
+
+    fn run(job: *Pool.Job, ctx: *Pool.Context) void {
+        const self: *GenJob = @fieldParentPtr("job", job);
+        const start: std.Io.Timestamp = .now(ctx.io, .awake);
+        self.generate(ctx) catch |err| {
+            self.err = err;
+            ctx.light_queues.clear();
+        };
+        self.ns = @intCast(@max(start.untilNow(ctx.io, .awake).nanoseconds, 0));
+    }
+
+    fn generate(self: *GenJob, ctx: *Pool.Context) !void {
+        self.terrain.heightmap(self.column[0], self.column[1], self.map);
+        var y = self.top;
+        while (y >= self.bottom) : (y -= 1) {
+            const c = try buildChunk(ctx.allocator, self.terrain, .{ .x = self.column[0], .y = y, .z = self.column[1] }, self.map);
+            self.chunks.append(ctx.allocator, c) catch |err| {
+                freeChunk(ctx.allocator, c);
+                return err;
+            };
+        }
+        try light.initColumn(ctx.allocator, ctx.light_queues, self.chunks.items, self.map);
+    }
+
+    fn freeChunks(self: *GenJob, allocator: Allocator) void {
+        for (self.chunks.items) |c| freeChunk(allocator, c);
+        self.chunks.clearRetainingCapacity();
+    }
+};
+
+/// Meshes a copy of a chunk and its border (`fillPadded`).
+const MeshJob = struct {
+    job: Pool.Job = .{ .run = run },
+    pos: ChunkPos = undefined,
+    /// matches `Chunk.mesh_job` while this is the chunk's latest mesh job
+    id: u64 = 0,
+    options: mesher.Options = .{},
+    padded: mesher.Padded = undefined,
+    padded_light: mesher.PaddedLight = undefined,
+    out: mesher.Output = .{},
+    err: ?anyerror = null,
+    ns: u64 = 0,
+
+    fn run(job: *Pool.Job, ctx: *Pool.Context) void {
+        const self: *MeshJob = @fieldParentPtr("job", job);
+        const start: std.Io.Timestamp = .now(ctx.io, .awake);
+        self.out.clear();
+        mesher.meshChunk(ctx.allocator, &self.padded, &self.padded_light, self.options, &self.out) catch |err| {
+            self.err = err;
+        };
+        self.ns = @intCast(@max(start.untilNow(ctx.io, .awake).nanoseconds, 0));
+    }
+};
+
+/// Jobs in flight per worker; enough to keep them busy between frames.
+const gen_jobs_per_worker = 2;
+const mesh_jobs_per_worker = 4;
+
+/// A world without workers, so chunks are generated and meshed on the main thread
+/// until `startWorkers`.
 pub fn init(allocator: Allocator, io: std.Io, seed: u64) !Self {
+    const light_queues = try allocator.create(light.Queues);
+    light_queues.* = .{};
+    errdefer allocator.destroy(light_queues);
+    const pool = try allocator.create(Pool);
+    pool.* = .{ .io = io, .allocator = allocator };
+    errdefer allocator.destroy(pool);
     return .{
         .allocator = allocator,
         .io = io,
         .terrain = .{ .seed = seed },
-        .padded = try allocator.create(mesher.Padded),
-        .padded_light = try allocator.create(mesher.PaddedLight),
-        .light_queues = blk: {
-            const q = try allocator.create(light.Queues);
-            q.* = .{};
-            break :blk q;
-        },
+        .light_queues = light_queues,
+        .pool = pool,
+        .main_context = try .create(allocator, io),
     };
 }
 
+pub const defaultWorkerCount = Pool.defaultWorkerCount;
+
+pub fn startWorkers(self: *Self, count: usize) void {
+    self.pool.start(count);
+    self.stats.workers = @intCast(self.pool.workers);
+}
+
 pub fn deinit(self: *Self) void {
+    // stop the workers before freeing what they work on
+    self.pool.deinit();
+    self.allocator.destroy(self.pool);
+    self.main_context.destroy();
+    for (self.gen_jobs.items) |job| {
+        job.freeChunks(self.allocator);
+        job.chunks.deinit(self.allocator);
+        self.allocator.destroy(job.map);
+        self.allocator.destroy(job);
+    }
+    for (self.mesh_jobs.items) |job| {
+        job.out.deinit(self.allocator);
+        self.allocator.destroy(job);
+    }
+    self.gen_jobs.deinit(self.allocator);
+    self.mesh_jobs.deinit(self.allocator);
+    self.free_gen_jobs.deinit(self.allocator);
+    self.free_mesh_jobs.deinit(self.allocator);
+    self.finished_jobs.deinit(self.allocator);
+    self.ready_columns.deinit(self.allocator);
+    self.columns_in_flight.deinit(self.allocator);
+
     var it = self.chunks.valueIterator();
     while (it.next()) |c| self.destroyChunk(c.*);
     self.chunks.deinit(self.allocator);
@@ -116,12 +246,9 @@ pub fn deinit(self: *Self) void {
     self.heightmaps.deinit(self.allocator);
     self.scratch_columns.deinit(self.allocator);
     self.offsets.deinit(self.allocator);
-    self.meshes.deinit(self.allocator);
     self.translucent_draws.deinit(self.allocator);
     self.scratch_keys.deinit(self.allocator);
     self.dirty.deinit(self.allocator);
-    self.allocator.destroy(self.padded);
-    self.allocator.destroy(self.padded_light);
     self.light_queues.deinit(self.allocator);
     self.allocator.destroy(self.light_queues);
 }
@@ -132,13 +259,18 @@ pub fn setFastLeaves(self: *Self, fast: bool) void {
     self.mesh_options.fast_leaves = fast;
     var it = self.chunks.valueIterator();
     while (it.next()) |c| {
-        if (c.*.state == .meshed and c.*.blocks != null) c.*.state = .generated;
+        if (c.*.state != .generated and c.*.blocks != null) c.*.state = .generated;
     }
     self.settled = false;
 }
 
 /// Drops every chunk; their mesh ranges are freed as of `frame`.
 pub fn regenerate(self: *Self, arena: *MeshArena, seed: u64, frame: u64) !void {
+    // columns in flight finish for nothing; mesh jobs find their chunk gone
+    self.epoch +%= 1;
+    for (self.ready_columns.items) |job| self.releaseGenJob(job);
+    self.ready_columns.clearRetainingCapacity();
+    self.columns_in_flight.clearRetainingCapacity();
     var it = self.chunks.valueIterator();
     while (it.next()) |c| {
         try freeMeshes(arena, c.*, frame);
@@ -148,7 +280,7 @@ pub fn regenerate(self: *Self, arena: *MeshArena, seed: u64, frame: u64) !void {
     self.dirty.clearRetainingCapacity();
     self.clearHeightmaps();
     self.terrain = .{ .seed = seed };
-    self.stats = .{};
+    self.stats = .{ .workers = self.stats.workers };
     self.settled = false;
 }
 
@@ -240,7 +372,14 @@ pub fn update(self: *Self, arena: *MeshArena, camera_pos: @Vector(3, f64), confi
     self.stats.generated_this_frame = 0;
     self.stats.meshed_this_frame = 0;
 
-    // edits first and unbudgeted, so they show up this frame
+    // finished jobs
+    {
+        const t = self.now();
+        try self.collect(arena, frame);
+        mesh_ns += self.since(t);
+    }
+
+    // edits first and unbudgeted, waited for so they show up this frame
     if (self.dirty.items.len > 0) {
         const t = self.now();
         var i: usize = 0;
@@ -257,33 +396,46 @@ pub fn update(self: *Self, arena: *MeshArena, camera_pos: @Vector(3, f64), confi
                 i += 1;
                 continue;
             }
-            if (c.state != .meshed) try self.meshChunk(arena, c, frame);
+            if (c.state == .generated) try self.submitMesh(arena, c, frame, true);
             _ = self.dirty.swapRemove(i);
         }
+        self.pool.help(&self.main_context, false);
+        try self.collect(arena, frame);
         mesh_ns += self.since(t);
     }
 
     if (self.settled) return;
 
-    // generate one ring beyond the view distance so edge chunks have neighbors to mesh
-    // against; top down, so sky light can fall in from the chunk above
+    // add generated columns, up to the budget
     var generated: u32 = 0;
-    gen: for (self.offsets.items) |off| {
-        if (@max(@abs(off[0]), @abs(off[1])) > r + 1) continue;
-        var y = config.max_y + 1;
-        while (y >= config.min_y - 1) : (y -= 1) {
-            const pos: ChunkPos = .{ .x = center.x + off[0], .y = y, .z = center.z + off[1] };
-            if (self.chunks.contains(pos)) continue;
-            if (generated >= config.gen_budget) break :gen;
-            const t = self.now();
-            try self.generateChunk(pos);
-            gen_ns += self.since(t);
-            generated += 1;
+    {
+        const t = self.now();
+        while (generated < config.gen_budget and self.ready_columns.items.len > 0) {
+            generated += try self.addColumn(self.ready_columns.orderedRemove(0), center, r, config);
         }
+        gen_ns += self.since(t);
+    }
+
+    // generate one ring beyond the view distance so edge chunks have neighbors to mesh
+    // against; nearest columns first
+    var columns_left = false;
+    const max_gen_jobs = gen_jobs_per_worker * @max(self.pool.workers, 1);
+    for (self.offsets.items) |off| {
+        if (@max(@abs(off[0]), @abs(off[1])) > r + 1) continue;
+        const column = [2]i32{ center.x + off[0], center.z + off[1] };
+        if (self.columns_in_flight.contains(column) or !self.columnMissing(column, config)) continue;
+        if (self.gen_in_flight + self.ready_columns.items.len >= max_gen_jobs) {
+            columns_left = true;
+            break;
+        }
+        const t = self.now();
+        try self.submitColumn(column, config);
+        gen_ns += self.since(t);
     }
 
     var meshed: u32 = 0;
     var pending: u32 = 0;
+    const max_mesh_jobs = mesh_jobs_per_worker * @max(self.pool.workers, 1);
     for (self.offsets.items) |off| {
         if (@max(@abs(off[0]), @abs(off[1])) > r) continue;
         var y = config.min_y;
@@ -294,26 +446,199 @@ pub fn update(self: *Self, arena: *MeshArena, camera_pos: @Vector(3, f64), confi
                 continue;
             };
             if (c.state == .meshed) continue;
-            if (meshed >= config.mesh_budget or !self.neighborsLoaded(pos)) {
+            if (c.state == .meshing or meshed >= config.mesh_budget or self.mesh_in_flight >= max_mesh_jobs or
+                !self.neighborsLoaded(pos))
+            {
                 pending += 1;
                 continue;
             }
             const t = self.now();
-            try self.meshChunk(arena, c, frame);
+            try self.submitMesh(arena, c, frame, false);
             mesh_ns += self.since(t);
             meshed += 1;
+            if (c.state == .meshing) pending += 1;
         }
     }
 
-    self.settled = generated == 0 and pending == 0;
+    // without workers, the jobs run here
+    if (self.pool.workers == 0) {
+        self.pool.runQueued(&self.main_context, std.math.maxInt(usize));
+        const t = self.now();
+        try self.collect(arena, frame);
+        mesh_ns += self.since(t);
+    }
+
+    self.settled = pending == 0 and !columns_left and self.gen_in_flight == 0 and
+        self.ready_columns.items.len == 0 and self.mesh_in_flight == 0;
     self.stats.loaded = self.chunks.count();
     self.stats.generated_this_frame = generated;
     self.stats.meshed_this_frame = meshed;
     self.stats.pending = pending;
     self.stats.gen_total += generated;
     self.stats.gen_total_ns += gen_ns;
-    self.stats.mesh_total += meshed;
     self.stats.mesh_total_ns += mesh_ns;
+}
+
+/// Whether column (x, z) misses a chunk in the generated y range.
+fn columnMissing(self: *const Self, column: [2]i32, config: Config) bool {
+    var y = config.min_y - 1;
+    while (y <= config.max_y + 1) : (y += 1) {
+        if (!self.chunks.contains(.{ .x = column[0], .y = y, .z = column[1] })) return true;
+    }
+    return false;
+}
+
+/// Starts generating a column on the workers.
+fn submitColumn(self: *Self, column: [2]i32, config: Config) !void {
+    const job = if (self.free_gen_jobs.pop()) |job| job else blk: {
+        try self.gen_jobs.ensureUnusedCapacity(self.allocator, 1);
+        try self.free_gen_jobs.ensureTotalCapacity(self.allocator, self.gen_jobs.items.len + 1);
+        const job = try self.allocator.create(GenJob);
+        errdefer self.allocator.destroy(job);
+        job.* = .{ .terrain = undefined, .epoch = undefined, .column = undefined, .top = undefined, .bottom = undefined, .map = try self.allocator.create(Terrain.Heightmap) };
+        self.gen_jobs.appendAssumeCapacity(job);
+        break :blk job;
+    };
+    errdefer self.free_gen_jobs.appendAssumeCapacity(job);
+    job.terrain = self.terrain;
+    job.epoch = self.epoch;
+    job.column = column;
+    job.top = config.max_y + 1;
+    job.bottom = config.min_y - 1;
+    job.err = null;
+    try self.columns_in_flight.put(self.allocator, column, {});
+    errdefer _ = self.columns_in_flight.remove(column);
+    try self.pool.submit(&job.job);
+    self.gen_in_flight += 1;
+}
+
+fn releaseGenJob(self: *Self, job: *GenJob) void {
+    job.freeChunks(self.allocator);
+    // the list has room for every job
+    self.free_gen_jobs.appendAssumeCapacity(job);
+}
+
+/// Starts meshing chunk `c` on the workers; `urgent` ones go first. Buried chunks get
+/// an empty mesh right away.
+fn submitMesh(self: *Self, arena: *MeshArena, c: *Chunk, frame: u64, urgent: bool) !void {
+    if (self.buried(c)) {
+        self.stats.mesh_skipped += 1;
+        try freeMeshes(arena, c, frame);
+        c.mesh_job = 0;
+        c.state = .meshed;
+        return;
+    }
+    const job = if (self.free_mesh_jobs.pop()) |job| job else blk: {
+        try self.mesh_jobs.ensureUnusedCapacity(self.allocator, 1);
+        try self.free_mesh_jobs.ensureTotalCapacity(self.allocator, self.mesh_jobs.items.len + 1);
+        const job = try self.allocator.create(MeshJob);
+        job.* = .{};
+        self.mesh_jobs.appendAssumeCapacity(job);
+        break :blk job;
+    };
+    errdefer self.free_mesh_jobs.appendAssumeCapacity(job);
+    job.job.urgent = urgent;
+    job.pos = c.pos;
+    job.id = self.next_job_id;
+    job.options = self.mesh_options;
+    job.err = null;
+    self.fillPadded(c.pos, &job.padded, &job.padded_light);
+    try self.pool.submit(&job.job);
+    self.next_job_id += 1;
+    self.mesh_in_flight += 1;
+    c.mesh_job = job.id;
+    c.state = .meshing;
+}
+
+/// Takes in the jobs the workers finished: uploads meshes, and queues generated
+/// columns in `ready_columns`.
+fn collect(self: *Self, arena: *MeshArena, frame: u64) !void {
+    self.finished_jobs.clearRetainingCapacity();
+    try self.pool.poll(&self.finished_jobs);
+    for (self.finished_jobs.items) |job| {
+        if (job.run == &GenJob.run) {
+            try self.takeColumn(@fieldParentPtr("job", job));
+        } else {
+            const mesh: *MeshJob = @fieldParentPtr("job", job);
+            self.mesh_in_flight -= 1;
+            // the list has room for every job
+            defer self.free_mesh_jobs.appendAssumeCapacity(mesh);
+            self.stats.mesh_total += 1;
+            self.stats.mesh_total_ns += mesh.ns;
+            if (mesh.err) |err| return err;
+            // dropped, or meshed again since
+            const c = self.chunks.get(mesh.pos) orelse continue;
+            if (c.mesh_job != mesh.id) continue;
+            c.mesh_job = 0;
+            try freeMeshes(arena, c, frame);
+            // an edit since the job started leaves it `generated`, to be meshed again
+            if (c.state == .meshing) c.state = .meshed;
+            c.mesh = try self.upload(arena, mesh.out.solid.items);
+            c.translucent_mesh = try self.upload(arena, mesh.out.translucent.items);
+        }
+    }
+    self.stats.gen_jobs = self.gen_in_flight + @as(u32, @intCast(self.ready_columns.items.len));
+    self.stats.mesh_jobs = self.mesh_in_flight;
+}
+
+/// Queues a generated column for `addColumn`, unless it was generated before a
+/// `regenerate`.
+fn takeColumn(self: *Self, job: *GenJob) !void {
+    self.gen_in_flight -= 1;
+    if (job.epoch != self.epoch) {
+        self.releaseGenJob(job);
+        return;
+    }
+    self.stats.gen_total_ns += job.ns;
+    errdefer {
+        _ = self.columns_in_flight.remove(job.column);
+        self.releaseGenJob(job);
+    }
+    if (job.err) |err| return err;
+    try self.ready_columns.append(self.allocator, job);
+}
+
+/// Adds the chunks of a generated column to the world, top down, unless it went out
+/// of range meanwhile, and returns how many were added.
+fn addColumn(self: *Self, job: *GenJob, center: ChunkPos, r: i32, config: Config) !u32 {
+    defer self.releaseGenJob(job);
+    _ = self.columns_in_flight.remove(job.column);
+    if (@abs(job.column[0] - center.x) > r + 2 or @abs(job.column[1] - center.z) > r + 2) return 0;
+    if (!self.heightmaps.contains(job.column)) {
+        const map = try self.allocator.create(Terrain.Heightmap);
+        errdefer self.allocator.destroy(map);
+        map.* = job.map.*;
+        try self.heightmaps.put(self.allocator, job.column, map);
+    }
+    const map = self.heightmaps.get(job.column).?;
+
+    var added: u32 = 0;
+    // below a chunk that was loaded already (kept for its edits), the light falling in
+    // differs from what the worker saw: light those chunks from scratch
+    var relight = self.chunks.contains(.{ .x = job.column[0], .y = job.top + 1, .z = job.column[1] });
+    while (job.chunks.items.len > 0) {
+        const c = job.chunks.orderedRemove(0);
+        if (c.pos.y < config.min_y - 1 or c.pos.y > config.max_y + 1 or self.chunks.contains(c.pos)) {
+            freeChunk(self.allocator, c);
+            relight = true;
+            continue;
+        }
+        self.chunks.put(self.allocator, c.pos, c) catch |err| {
+            freeChunk(self.allocator, c);
+            return err;
+        };
+        added += 1;
+        if (relight) {
+            if (c.light) |l| self.allocator.destroy(l);
+            c.light = null;
+            c.uniform_light = 0;
+            c.has_block_light = false;
+            try light.initChunk(self, c, map);
+        } else {
+            try light.integrateChunk(self, c);
+        }
+    }
+    return added;
 }
 
 /// Whether every chunk of column (x, z) in the configured y range has a mesh
@@ -427,6 +752,7 @@ fn unloadFar(self: *Self, arena: *MeshArena, center: ChunkPos, r: i32, config: C
         if (c.modified) {
             // keep the edited blocks (they can't be regenerated); remesh when back in range
             c.state = .generated;
+            c.mesh_job = 0;
             continue;
         }
         _ = self.chunks.remove(pos);
@@ -461,11 +787,22 @@ fn heightmap(self: *Self, x: i32, z: i32) !*const Terrain.Heightmap {
     return map;
 }
 
+/// Generates and lights one chunk on the calling thread (the workers generate whole
+/// columns; see `GenJob`).
 fn generateChunk(self: *Self, pos: ChunkPos) !void {
     const map = try self.heightmap(pos.x, pos.z);
-    const c = try self.allocator.create(Chunk);
-    c.* = .{ .pos = pos };
+    const c = try buildChunk(self.allocator, self.terrain, pos, map);
     errdefer self.destroyChunk(c);
+    try self.chunks.put(self.allocator, pos, c);
+    errdefer _ = self.chunks.remove(pos);
+    try light.initChunk(self, c, map);
+}
+
+/// The blocks of a new chunk, not lit yet.
+fn buildChunk(allocator: Allocator, terrain: Terrain, pos: ChunkPos, map: *const Terrain.Heightmap) !*Chunk {
+    const c = try allocator.create(Chunk);
+    c.* = .{ .pos = pos };
+    errdefer freeChunk(allocator, c);
 
     switch (Terrain.classify(pos.y, map)) {
         .uniform => |block| {
@@ -474,15 +811,13 @@ fn generateChunk(self: *Self, pos: ChunkPos) !void {
             if (block == .air) c.state = .meshed;
         },
         .mixed => {
-            const blocks = try self.allocator.create(chunk.Blocks);
-            self.terrain.fill(pos.y, map, blocks);
+            const blocks = try allocator.create(chunk.Blocks);
+            terrain.fill(pos.y, map, blocks);
             c.blocks = blocks;
         },
     }
     c.updateSolidSides();
-    try self.chunks.put(self.allocator, pos, c);
-    errdefer _ = self.chunks.remove(pos);
-    try light.initChunk(self, c, map);
+    return c;
 }
 
 fn freeMeshes(arena: *MeshArena, c: *Chunk, frame: u64) !void {
@@ -493,9 +828,13 @@ fn freeMeshes(arena: *MeshArena, c: *Chunk, frame: u64) !void {
 }
 
 fn destroyChunk(self: *Self, c: *Chunk) void {
-    if (c.blocks) |blocks| self.allocator.destroy(blocks);
-    if (c.light) |l| self.allocator.destroy(l);
-    self.allocator.destroy(c);
+    freeChunk(self.allocator, c);
+}
+
+fn freeChunk(allocator: Allocator, c: *Chunk) void {
+    if (c.blocks) |blocks| allocator.destroy(blocks);
+    if (c.light) |l| allocator.destroy(l);
+    allocator.destroy(c);
 }
 
 fn neighborsLoaded(self: *const Self, pos: ChunkPos) bool {
@@ -525,21 +864,6 @@ fn buried(self: *const Self, c: *const Chunk) bool {
     return true;
 }
 
-fn meshChunk(self: *Self, arena: *MeshArena, c: *Chunk, frame: u64) !void {
-    self.meshes.clear();
-    if (self.buried(c)) {
-        self.stats.mesh_skipped += 1;
-    } else {
-        self.fillPadded(c.pos);
-        try mesher.meshChunk(self.allocator, self.padded, self.padded_light, self.mesh_options, &self.meshes);
-    }
-
-    try freeMeshes(arena, c, frame);
-    c.state = .meshed;
-    c.mesh = try self.upload(arena, self.meshes.solid.items);
-    c.translucent_mesh = try self.upload(arena, self.meshes.translucent.items);
-}
-
 /// Null when there is nothing to upload or the arena is full.
 fn upload(self: *Self, arena: *MeshArena, vertices: []const mesher.Vertex) !?chunk.MeshRange {
     if (vertices.len == 0) return null;
@@ -552,8 +876,8 @@ fn upload(self: *Self, arena: *MeshArena, vertices: []const mesher.Vertex) !?chu
 }
 
 /// Copies the blocks and light of the chunk and a one-block border of its 26 neighbors
-/// into `self.padded` and `self.padded_light`.
-fn fillPadded(self: *Self, pos: ChunkPos) void {
+/// into `padded` and `padded_light`.
+fn fillPadded(self: *const Self, pos: ChunkPos, padded: *mesher.Padded, padded_light: *mesher.PaddedLight) void {
     var neighbors: [3][3][3]?*const Chunk = undefined;
     for (0..3) |y| {
         for (0..3) |z| {
@@ -563,7 +887,7 @@ fn fillPadded(self: *Self, pos: ChunkPos) void {
         }
     }
 
-    // per padded coordinate: which neighbor (0..2) and the local coordinate inside it
+    // per padded y or z: which neighbor (0..2) and the local coordinate inside it
     const Axis = struct { n: usize, local: usize };
     var axis: [mesher.padded_size]Axis = undefined;
     for (&axis, 0..) |*a, p| {
@@ -577,12 +901,24 @@ fn fillPadded(self: *Self, pos: ChunkPos) void {
 
     for (axis, 0..) |ay, py| {
         for (axis, 0..) |az, pz| {
-            for (axis, 0..) |ax, px| {
-                const n = neighbors[ay.n][az.n][ax.n];
-                const pi = mesher.paddedIndex(px, py, pz);
-                const i = chunk.index(ax.local, ay.local, az.local);
-                self.padded[pi] = if (n) |c| c.getIndex(i) else .air;
-                self.padded_light[pi] = if (n) |c| c.getLight(i) else 0xf0;
+            const row = mesher.paddedIndex(0, py, pz);
+            const n = neighbors[ay.n][az.n];
+            // the ends of the row come from the neighbors in x
+            for ([_]usize{ 0, 2 }, [_]usize{ 0, mesher.padded_size - 1 }, [_]usize{ chunk.size - 1, 0 }) |nx, px, lx| {
+                const i = chunk.index(lx, ay.local, az.local);
+                padded[row + px] = if (n[nx]) |c| c.getIndex(i) else .air;
+                padded_light[row + px] = if (n[nx]) |c| c.getLight(i) else 0xf0;
+            }
+            // the middle is one row of the chunk in the middle
+            const blocks = padded[row + 1 ..][0..chunk.size];
+            const lights = padded_light[row + 1 ..][0..chunk.size];
+            const start = chunk.index(0, ay.local, az.local);
+            if (n[1]) |c| {
+                if (c.blocks) |b| @memcpy(blocks, b[start..][0..chunk.size]) else @memset(blocks, c.uniform);
+                if (c.light) |l| @memcpy(lights, l[start..][0..chunk.size]) else @memset(lights, c.uniform_light);
+            } else {
+                @memset(blocks, .air);
+                @memset(lights, 0xf0);
             }
         }
     }
@@ -718,4 +1054,37 @@ test "sky light fades with depth under water" {
     defer world.deinit();
     try testing.expectEqual(@as(u4, 14), sky(&world, x, Terrain.sea_level, 0));
     try testing.expectEqual(@as(u4, 12), sky(&world, x, Terrain.sea_level - 2, 0));
+}
+
+test "columns generated on the workers are lit like chunks generated one by one" {
+    var a = try testWorld();
+    defer a.deinit();
+    var b = try Self.init(testing.allocator, testing.io, 7);
+    defer b.deinit();
+    b.startWorkers(2);
+    // the y range of `testWorld`
+    const config: Config = .{ .render_distance = 1, .min_y = 0, .max_y = 2, .gen_budget = 1000, .mesh_budget = 0 };
+    var cx: i32 = -1;
+    while (cx <= 1) : (cx += 1) {
+        var cz: i32 = -1;
+        while (cz <= 1) : (cz += 1) try b.submitColumn(.{ cx, cz }, config);
+    }
+    b.pool.help(&b.main_context, true);
+    try b.pool.poll(&b.finished_jobs);
+    for (b.finished_jobs.items) |job| try b.takeColumn(@fieldParentPtr("job", job));
+    try testing.expectEqual(9, b.ready_columns.items.len);
+    // in whatever order they finished
+    while (b.ready_columns.items.len > 0) {
+        _ = try b.addColumn(b.ready_columns.orderedRemove(0), .{ .x = 0, .y = 0, .z = 0 }, 1, config);
+    }
+    try testing.expectEqual(a.chunks.count(), b.chunks.count());
+    var it = a.chunks.iterator();
+    while (it.next()) |entry| {
+        const ca = entry.value_ptr.*;
+        const cb = b.chunks.get(entry.key_ptr.*).?;
+        for (0..chunk.volume) |i| {
+            try testing.expectEqual(ca.getIndex(i), cb.getIndex(i));
+            try testing.expectEqual(ca.getLight(i), cb.getLight(i));
+        }
+    }
 }

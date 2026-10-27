@@ -45,6 +45,8 @@ pub fn index(x: usize, y: usize, z: usize) usize {
 pub const State = enum {
     /// block data exists, no mesh yet (or it needs rebuilding)
     generated,
+    /// a mesh job is running (`mesh_job`)
+    meshing,
     /// mesh is up to date (possibly empty)
     meshed,
 };
@@ -58,6 +60,8 @@ pub const Chunk = struct {
     /// vertex ranges in the mesh arena, null when there is nothing to draw
     mesh: ?MeshRange = null,
     translucent_mesh: ?MeshRange = null,
+    /// id of the latest mesh job started for the chunk, 0 when none is running
+    mesh_job: u64 = 0,
     /// bit per side (+X, -X, +Y, -Y, +Z, -Z, as in the mesher), set when that
     /// whole boundary layer is opaque; see `updateSolidSides`
     solid_sides: u6 = 0,

@@ -7,8 +7,10 @@
 //!
 //! New chunks are seeded with sky light falling from the chunk above (or estimated
 //! from the heightmap when that isn't loaded), then exchange light with their loaded
-//! neighbors. Edits remove the light around the changed block and flood it back in.
-//! Light only spreads through loaded chunks; chunks loaded later pull it in.
+//! neighbors. Workers light whole columns of new chunks this way before they join the
+//! world (`initColumn`), so only the exchange is left for the main thread. Edits remove
+//! the light around the changed block and flood it back in. Light only spreads through
+//! loaded chunks; chunks loaded later pull it in.
 
 const std = @import("std");
 const chunk = @import("chunk.zig");
@@ -82,6 +84,13 @@ pub const Queues = struct {
     /// sky levels of a chunk being seeded
     scratch: chunk.Light = undefined,
 
+    /// Forgets queued work, after an error left some behind.
+    pub fn clear(self: *Queues) void {
+        self.add.clearRetainingCapacity();
+        self.remove.clearRetainingCapacity();
+        self.touched.clearRetainingCapacity();
+    }
+
     pub fn deinit(self: *Queues, allocator: std.mem.Allocator) void {
         self.add.deinit(allocator);
         self.remove.deinit(allocator);
@@ -97,48 +106,110 @@ const Mode = enum {
     edit,
 };
 
+/// The chunks light spreads through: every loaded chunk (on the main thread), or a
+/// column of new chunks being generated on a worker.
+const Space = struct {
+    allocator: std.mem.Allocator,
+    queues: *Queues,
+    /// null for a column
+    world: ?*World = null,
+    /// top to bottom
+    column: []const *Chunk = &.{},
+
+    fn of(world: *World) Space {
+        return .{ .allocator = world.allocator, .queues = world.light_queues, .world = world };
+    }
+
+    /// The chunk next to `c` in direction `dir`, if there is one.
+    fn next(s: Space, c: *const Chunk, dir: usize) ?*Chunk {
+        const d = directions[dir];
+        if (s.world) |world| return world.chunks.get(c.pos.offset(d[0], d[1], d[2]));
+        if (d[1] == 0) return null;
+        const k = s.column[0].pos.y - c.pos.y - d[1];
+        return if (k >= 0 and k < s.column.len) s.column[@intCast(k)] else null;
+    }
+};
+
 /// Lights a newly generated chunk `c` (already in `world.chunks`) whose column's
 /// heightmap is `map`, and spreads light between it and its loaded neighbors.
 pub fn initChunk(world: *World, c: *Chunk, map: *const Terrain.Heightmap) !void {
-    const q = world.light_queues;
-    if (uniformSeed(world, c, map)) |uniform| {
-        c.uniform_light = uniform;
-    } else {
-        const emitters = seedSky(world, c, map, &q.scratch);
-        // keep uniform light compact
-        const first = q.scratch[0];
-        if (std.mem.allEqual(u8, &q.scratch, first)) {
-            c.uniform_light = first;
-        } else {
-            const light = try world.allocator.create(chunk.Light);
-            light.* = q.scratch;
-            c.light = light;
-        }
-        if (emitters) {
-            c.has_block_light = true;
-            for (0..chunk.volume) |i| {
-                if (c.getIndex(i).lightEmission() > 0) try q.add.append(world.allocator, .{ .c = c, .i = @intCast(i) });
-            }
-        }
-    }
-
-    // seeding settles each column from top to bottom, so inside the chunk only the
-    // sideways spread between columns is left
-    if (c.light) |light| try queueSideways(world, c, light);
-    try exchangeFaces(world, c, .sky);
-    try propagate(world, .sky);
-    try exchangeFaces(world, c, .block);
-    try propagate(world, .block);
+    const s: Space = .of(world);
+    const emitters = try seed(s, c, world.chunks.get(c.pos.offset(0, 1, 0)), map);
+    try exchangeFaces(s, c, .sky);
+    try propagate(s, .sky);
+    if (emitters) try queueEmitters(s, c);
+    try exchangeFaces(s, c, .block);
+    try propagate(s, .block);
     try finish(world, .streaming);
 }
 
+/// Lights a column of new chunks, top to bottom, that aren't in the world yet (on a
+/// worker): the light falling in from above and spreading inside the column. Once
+/// they are added to the world, `integrateChunk` spreads light to and from the rest.
+pub fn initColumn(allocator: std.mem.Allocator, queues: *Queues, column: []const *Chunk, map: *const Terrain.Heightmap) !void {
+    const s: Space = .{ .allocator = allocator, .queues = queues, .column = column };
+    var emitters = false;
+    for (column, 0..) |c, k| {
+        if (try seed(s, c, if (k > 0) column[k - 1] else null, map)) emitters = true;
+    }
+    try propagate(s, .sky);
+    if (emitters) {
+        for (column) |c| if (c.has_block_light) try queueEmitters(s, c);
+    }
+    try propagate(s, .block);
+}
+
+/// Spreads light between a chunk lit by `initColumn`, just added to the world, and its
+/// loaded neighbors (including the chunk above from the same column, which may have
+/// been lit further since).
+pub fn integrateChunk(world: *World, c: *Chunk) !void {
+    const s: Space = .of(world);
+    try exchangeFaces(s, c, .sky);
+    try propagate(s, .sky);
+    try exchangeFaces(s, c, .block);
+    try propagate(s, .block);
+    try finish(world, .streaming);
+}
+
+/// Sets the initial light of a new chunk from the sky light falling in from `above`
+/// (or estimated from `map` without it), and queues what spreads sideways inside the
+/// chunk. Returns whether it has blocks that give off light, for `queueEmitters`.
+fn seed(s: Space, c: *Chunk, above: ?*const Chunk, map: *const Terrain.Heightmap) !bool {
+    if (uniformSeed(c, above, map)) |uniform| {
+        c.uniform_light = uniform;
+        return false;
+    }
+    const scratch = &s.queues.scratch;
+    const emitters = seedSky(c, above, map, scratch);
+    // keep uniform light compact
+    const first = scratch[0];
+    if (std.mem.allEqual(u8, scratch, first)) {
+        c.uniform_light = first;
+    } else {
+        const light = try s.allocator.create(chunk.Light);
+        light.* = scratch.*;
+        c.light = light;
+        // seeding settles each column from top to bottom, so inside the chunk only the
+        // sideways spread between columns is left
+        try queueSideways(s, c, light);
+    }
+    c.has_block_light = emitters;
+    return emitters;
+}
+
+/// Queues the blocks of `c` that give off light, to spread their block light.
+fn queueEmitters(s: Space, c: *Chunk) !void {
+    for (0..chunk.volume) |i| {
+        if (emissions[@intFromEnum(c.getIndex(i))] > 0) try s.queues.add.append(s.allocator, .{ .c = c, .i = @intCast(i) });
+    }
+}
+
 /// The single light value of a uniform chunk lit evenly (solid rock, open sky), or null.
-fn uniformSeed(world: *const World, c: *const Chunk, map: *const Terrain.Heightmap) ?u8 {
+fn uniformSeed(c: *const Chunk, above: ?*const Chunk, map: *const Terrain.Heightmap) ?u8 {
     if (c.blocks != null) return null;
     if (c.uniform.lightOpacity() == max) return withLevel(c.uniform.lightEmission(), .sky, 0);
     if (c.uniform.lightOpacity() != 0 or c.uniform.lightEmission() != 0) return null;
     // see-through: lit evenly only if full sky light falls in everywhere
-    const above = world.chunks.get(c.pos.offset(0, 1, 0));
     for (0..size) |z| {
         for (0..size) |x| {
             const v = if (above) |a|
@@ -153,8 +224,7 @@ fn uniformSeed(world: *const World, c: *const Chunk, map: *const Terrain.Heightm
 
 /// Sky levels of a new chunk from the light falling into it, plus block light of
 /// its emitters, written into `out`. Returns whether there are any emitters.
-fn seedSky(world: *const World, c: *const Chunk, map: *const Terrain.Heightmap, out: *chunk.Light) bool {
-    const above = world.chunks.get(c.pos.offset(0, 1, 0));
+fn seedSky(c: *const Chunk, above: ?*const Chunk, map: *const Terrain.Heightmap, out: *chunk.Light) bool {
     const y0 = c.pos.y * size;
     var emitters = false;
     for (0..size) |z| {
@@ -190,7 +260,7 @@ fn estimateSky(y: i32, surface: i32) u4 {
 
 /// Queues the blocks of `c` that can raise the sky light of a neighbor in x or z
 /// within the chunk.
-fn queueSideways(world: *World, c: *Chunk, light: *const chunk.Light) !void {
+fn queueSideways(s: Space, c: *Chunk, light: *const chunk.Light) !void {
     for (0..size) |y| {
         // evenly lit layers (open air, solid rock) have nothing to spread
         const layer = light[y * size * size ..][0 .. size * size];
@@ -205,7 +275,7 @@ fn queueSideways(world: *World, c: *Chunk, light: *const chunk.Light) !void {
                     (z > 0 and raises(c, light, v, i - size)) or
                     (z < size - 1 and raises(c, light, v, i + size)))
                 {
-                    try world.light_queues.add.append(world.allocator, .{ .c = c, .i = @intCast(i) });
+                    try s.queues.add.append(s.allocator, .{ .c = c, .i = @intCast(i) });
                 }
             }
         }
@@ -221,10 +291,10 @@ inline fn raises(c: *const Chunk, light: *const chunk.Light, v: u4, j: usize) bo
 
 /// Queues the blocks on either side of each face `c` shares with a loaded neighbor
 /// that can brighten the block across.
-fn exchangeFaces(world: *World, c: *Chunk, channel: Channel) !void {
-    const q = world.light_queues;
+fn exchangeFaces(s: Space, c: *Chunk, channel: Channel) !void {
+    const q = s.queues;
     for (directions, 0..) |d, dir| {
-        const n = world.chunks.get(c.pos.offset(d[0], d[1], d[2])) orelse continue;
+        const n = s.next(c, dir) orelse continue;
         if (channel == .block and !c.has_block_light and !n.has_block_light) continue;
         // between chunks uniform in blocks and light, one pair decides for the whole face
         if (c.blocks == null and c.light == null and n.blocks == null and n.light == null) {
@@ -249,10 +319,10 @@ fn exchangeFaces(world: *World, c: *Chunk, channel: Channel) !void {
                 // light never raises an equally lit block
                 if (va == vb) continue;
                 if (spread(va, n.getIndex(ib), channel, dir) > vb) {
-                    try q.add.append(world.allocator, .{ .c = c, .i = @intCast(ia) });
+                    try q.add.append(s.allocator, .{ .c = c, .i = @intCast(ia) });
                 }
                 if (spread(vb, c.getIndex(ia), channel, dir ^ 1) > va) {
-                    try q.add.append(world.allocator, .{ .c = n, .i = @intCast(ib) });
+                    try q.add.append(s.allocator, .{ .c = n, .i = @intCast(ib) });
                 }
             }
         }
@@ -261,45 +331,46 @@ fn exchangeFaces(world: *World, c: *Chunk, channel: Channel) !void {
 
 /// Updates the light after the block at chunk `c`, index `i` changed to `block`.
 pub fn blockChanged(world: *World, c: *Chunk, i: usize, block: BlockId) !void {
-    const q = world.light_queues;
+    const s: Space = .of(world);
+    const q = s.queues;
     const node: Node = .{ .c = c, .i = @intCast(i) };
     for (channels) |channel| {
         // take away whatever light the block had and everything it lit
         const v = get(node, channel);
         if (v > 0) {
-            try set(world, node, channel, 0);
-            try q.remove.append(world.allocator, .{ .node = node, .level = v });
+            try set(s, node, channel, 0);
+            try q.remove.append(s.allocator, .{ .node = node, .level = v });
         }
-        try unpropagate(world, channel);
+        try unpropagate(s, channel);
 
         if (channel == .block and block.lightEmission() > 0) {
-            try set(world, node, channel, block.lightEmission());
-            try q.add.append(world.allocator, node);
+            try set(s, node, channel, block.lightEmission());
+            try q.add.append(s.allocator, node);
         }
         // let the neighbors light the block again
         for (0..6) |dir| {
-            const n = neighbor(world, node, dir) orelse continue;
-            if (get(n, channel) > 0) try q.add.append(world.allocator, n);
+            const n = neighbor(s, node, dir) orelse continue;
+            if (get(n, channel) > 0) try q.add.append(s.allocator, n);
         }
-        try propagate(world, channel);
+        try propagate(s, channel);
     }
     try finish(world, .edit);
 }
 
 /// Floods light outward from every block in the add queue.
-fn propagate(world: *World, channel: Channel) !void {
-    const q = world.light_queues;
+fn propagate(s: Space, channel: Channel) !void {
+    const q = s.queues;
     var head: usize = 0;
     while (head < q.add.items.len) : (head += 1) {
         const node = q.add.items[head];
         const v = get(node, channel);
         if (v <= 1) continue;
         for (0..6) |dir| {
-            const n = neighbor(world, node, dir) orelse continue;
+            const n = neighbor(s, node, dir) orelse continue;
             const reached = spread(v, n.c.getIndex(n.i), channel, dir);
             if (reached > get(n, channel)) {
-                try set(world, n, channel, reached);
-                try q.add.append(world.allocator, n);
+                try set(s, n, channel, reached);
+                try q.add.append(s.allocator, n);
             }
         }
     }
@@ -308,23 +379,23 @@ fn propagate(world: *World, channel: Channel) !void {
 
 /// Darkens everything the blocks in the remove queue lit, and queues the brighter
 /// blocks around the dark area so `propagate` can fill it back in.
-fn unpropagate(world: *World, channel: Channel) !void {
-    const q = world.light_queues;
+fn unpropagate(s: Space, channel: Channel) !void {
+    const q = s.queues;
     var head: usize = 0;
     while (head < q.remove.items.len) : (head += 1) {
         const r = q.remove.items[head];
         for (0..6) |dir| {
-            const n = neighbor(world, r.node, dir) orelse continue;
+            const n = neighbor(s, r.node, dir) orelse continue;
             const v = get(n, channel);
             if (v == 0) continue;
             const emitter = channel == .block and emissions[@intFromEnum(n.c.getIndex(n.i))] > 0;
             // light the removed block could have given it
             const dependent = v < r.level or (channel == .sky and dir == down and r.level == max and v == max);
             if (dependent and !emitter) {
-                try set(world, n, channel, 0);
-                try q.remove.append(world.allocator, .{ .node = n, .level = v });
+                try set(s, n, channel, 0);
+                try q.remove.append(s.allocator, .{ .node = n, .level = v });
             } else {
-                try q.add.append(world.allocator, n);
+                try q.add.append(s.allocator, n);
             }
         }
     }
@@ -335,13 +406,15 @@ inline fn get(n: Node, channel: Channel) u4 {
     return level(n.c.getLight(n.i), channel);
 }
 
-/// Writes a level and remembers the chunk for `finish`.
-fn set(world: *World, n: Node, channel: Channel, value: u4) !void {
-    try n.c.setLight(world.allocator, n.i, withLevel(n.c.getLight(n.i), channel, value));
+/// Writes a level and remembers the chunk for `finish` (in the world).
+fn set(s: Space, n: Node, channel: Channel, value: u4) !void {
+    try n.c.setLight(s.allocator, n.i, withLevel(n.c.getLight(n.i), channel, value));
     if (channel == .block and value > 0) n.c.has_block_light = true;
+    // a new column has no meshes to update
+    if (s.world == null) return;
     if (!n.c.relit) {
         n.c.relit = true;
-        try world.light_queues.touched.append(world.allocator, n.c);
+        try s.queues.touched.append(s.allocator, n.c);
     }
     const p = coords(n.i);
     for (p, 0..) |v, axis| {
@@ -389,12 +462,12 @@ fn sideChanged(sides: u6, axis: usize, d: i32) bool {
 fn remesh(world: *World, c: *Chunk, mode: Mode) !void {
     switch (mode) {
         .streaming => {
-            if (c.state != .meshed) return;
+            if (c.state == .generated) return;
             c.state = .generated;
         },
         .edit => {
             // never meshed: streaming will get to it
-            if (c.state != .meshed and c.mesh == null and c.translucent_mesh == null) return;
+            if (c.state == .generated and c.mesh == null and c.translucent_mesh == null) return;
             c.state = .generated;
             try world.dirty.append(world.allocator, c.pos);
         },
@@ -403,12 +476,11 @@ fn remesh(world: *World, c: *Chunk, mode: Mode) !void {
 }
 
 /// The block next to `n` in direction `dir`, if its chunk is loaded.
-fn neighbor(world: *const World, n: Node, dir: usize) ?Node {
+fn neighbor(s: Space, n: Node, dir: usize) ?Node {
     const p = step(coords(n.i), dir);
     const axis = axisOf(dir);
     if (p[axis] >= 0 and p[axis] < size) return .{ .c = n.c, .i = @intCast(index(p)) };
-    const d = directions[dir];
-    const c = world.chunks.get(n.c.pos.offset(d[0], d[1], d[2])) orelse return null;
+    const c = s.next(n.c, dir) orelse return null;
     var wrapped = p;
     wrapped[axis] = @mod(p[axis], size);
     return .{ .c = c, .i = @intCast(index(wrapped)) };
