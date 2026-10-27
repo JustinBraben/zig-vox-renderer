@@ -21,8 +21,13 @@ zig build run
 Click the world to capture the mouse, Esc releases it for the debug UI.
 
 - WASD: move, Space: jump (swim up in water, up while flying), Ctrl: down while flying, Shift: sprint
-- Left mouse: break block, right mouse: place block, mouse wheel / 1-9: pick block
-- F: toggle flying
+- Left mouse: break block (hold in survival), right mouse: place block, Q: throw the selected block
+- Mouse wheel / 1-9: hotbar slot, middle mouse: pick the targeted block (creative)
+- G: switch between survival and creative, F: toggle flying (creative)
+
+## Game modes
+
+New worlds start in **survival**: blocks take time to break and drop an item to pick up, placing uses blocks from the hotbar, falls of more than 3 blocks hurt, and health comes back slowly. Dying returns you to the spawn point with your hotbar. **Creative** breaks blocks at once, never runs out of them, and lets you fly; the Player section of the debug UI can put any block in the selected slot. Worlds saved before game modes existed load in creative. Dropped items aren't saved.
 
 ## Saves
 

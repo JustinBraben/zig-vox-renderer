@@ -1,5 +1,6 @@
-//! Graphics pipelines without vertex buffers (geometry from gl_VertexIndex), drawn
-//! with depth testing but no depth writes into the main color + depth target.
+//! Overlay graphics pipelines into the main color + depth target: by default without
+//! vertex buffers (geometry from gl_VertexIndex), depth tested, not depth written and
+//! not blended.
 
 const std = @import("std");
 
@@ -14,6 +15,11 @@ pub const Options = struct {
     frag: []const u8,
     topology: vk.PrimitiveTopology,
     depth_compare: vk.CompareOp,
+    depth_test: bool = true,
+    depth_write: bool = false,
+    /// alpha blending
+    blend: bool = false,
+    vertex_input: *const vk.PipelineVertexInputStateCreateInfo = &.{},
 };
 
 pub fn create(device: vk.DeviceProxy, assets: *const Assets, layout: vk.PipelineLayout, color_format: vk.Format, depth_format: vk.Format, options: Options) !vk.Pipeline {
@@ -38,7 +44,7 @@ pub fn create(device: vk.DeviceProxy, assets: *const Assets, layout: vk.Pipeline
             .{ .stage = .{ .vertex_bit = true }, .module = vertex_module, .p_name = "main" },
             .{ .stage = .{ .fragment_bit = true }, .module = fragment_module, .p_name = "main" },
         },
-        .p_vertex_input_state = &.{},
+        .p_vertex_input_state = options.vertex_input,
         .p_input_assembly_state = &.{
             .topology = options.topology,
             .primitive_restart_enable = .false,
@@ -67,8 +73,8 @@ pub fn create(device: vk.DeviceProxy, assets: *const Assets, layout: vk.Pipeline
             .alpha_to_one_enable = .false,
         },
         .p_depth_stencil_state = &.{
-            .depth_test_enable = .true,
-            .depth_write_enable = .false,
+            .depth_test_enable = if (options.depth_test) .true else .false,
+            .depth_write_enable = if (options.depth_write) .true else .false,
             .depth_compare_op = options.depth_compare,
             .depth_bounds_test_enable = .false,
             .stencil_test_enable = .false,
@@ -82,9 +88,9 @@ pub fn create(device: vk.DeviceProxy, assets: *const Assets, layout: vk.Pipeline
             .logic_op = .copy,
             .attachment_count = 1,
             .p_attachments = &.{.{
-                .blend_enable = .false,
-                .src_color_blend_factor = .one,
-                .dst_color_blend_factor = .zero,
+                .blend_enable = if (options.blend) .true else .false,
+                .src_color_blend_factor = .src_alpha,
+                .dst_color_blend_factor = .one_minus_src_alpha,
                 .color_blend_op = .add,
                 .src_alpha_blend_factor = .one,
                 .dst_alpha_blend_factor = .zero,

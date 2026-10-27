@@ -12,17 +12,20 @@ const MeshArena = @import("gfx/mesh_arena.zig");
 const VoxelPipeline = @import("gfx/voxel_pipeline.zig");
 const SkyPipeline = @import("gfx/sky_pipeline.zig");
 const OutlinePipeline = @import("gfx/outline_pipeline.zig");
+const OverlayPipeline = @import("gfx/overlay_pipeline.zig");
+const sprites = @import("gfx/sprites.zig");
 const Texture = @import("gfx/texture.zig");
 const Assets = @import("assets.zig");
 const World = @import("world/world.zig");
 const Lod = @import("world/lod.zig");
-const BlockId = @import("world/block.zig").BlockId;
 const Tile = @import("world/block.zig").Tile;
 const raycast = @import("world/raycast.zig");
 const Player = @import("player.zig");
 const Camera = @import("camera.zig");
 const Settings = @import("settings.zig").Settings;
 const debug_ui = @import("ui/debug_ui.zig");
+const hud = @import("ui/hud.zig");
+const Game = @import("game/game.zig");
 const math = @import("math.zig");
 const vk = VulkanContext.vk;
 
@@ -151,6 +154,9 @@ pub fn main(init: std.process.Init) !void {
     var outline = try OutlinePipeline.init(device, &assets, &voxel, swapchain.surface_format.format, DepthBuffer.format);
     defer outline.deinit();
 
+    var overlay = try OverlayPipeline.init(device, memory, &assets, &voxel, swapchain.surface_format.format, DepthBuffer.format, frames_in_flight);
+    defer overlay.deinit();
+
     var arena = try MeshArena.init(gpa, device, memory, mesh_arena_vertices, frames_in_flight);
     defer arena.deinit();
 
@@ -202,17 +208,22 @@ pub fn main(init: std.process.Init) !void {
     defer lod.deinit();
 
     // stand on the terrain at the origin; the benchmark flies high above it instead
-    const ground: f64 = @floatFromInt(world.terrain.height(0, 0) + 1);
-    var player = Player.init(.{ 0.5, if (bench != null) ground + 40 else ground, 0.5 });
-    if (bench != null) player.setFlying(true);
+    var game = Game.init(gpa, spawnPoint(&world));
+    defer game.deinit();
+    var player = Player.init(game.spawn);
     var camera: Camera = .{ .position = player.eye(1) };
-    restorePlayer(&world, &player, &camera, &settings);
+    if (bench != null) {
+        game.setMode(.creative, &player);
+        player = .init(game.spawn + @Vector(3, f64){ 0, 40, 0 });
+        player.setFlying(true);
+        camera.position = player.eye(1);
+    } else {
+        restorePlayer(&world, &player, &camera, &settings, &game);
+    }
     // saved again on the way out, and every `autosave_interval_ns`
-    defer saveGame(&world, &player, &camera, &settings);
+    defer saveGame(&world, &player, &camera, &settings, &game);
     var last_save_ns = backend.nanoTime();
     var physics_time: f64 = 0;
-    // index into `BlockId.placeable`
-    var selected: usize = 0;
     var target: ?raycast.Hit = null;
 
     // wait for the GPU before any of the deferred destruction above runs
@@ -222,8 +233,12 @@ pub fn main(init: std.process.Init) !void {
     var needs_recreate = false;
     // mouse captured for playing; released for the UI
     var captured = false;
-    var break_block = false;
+    // left button: clicked this frame (creative breaks), held (survival digs)
+    var break_click = false;
+    var break_held = false;
     var place_block = false;
+    var pick_block = false;
+    var throw_block = false;
     var last_frame_ns = backend.nanoTime();
     var frame_ms: f32 = 0;
 
@@ -240,27 +255,35 @@ pub fn main(init: std.process.Init) !void {
                     if (!captured) {
                         if (!over_ui) captured = setCaptured(window, true);
                     } else if (event.button.button == c.SDL_BUTTON_LEFT) {
-                        break_block = true;
+                        break_click = true;
+                        break_held = true;
                     } else if (event.button.button == c.SDL_BUTTON_RIGHT) {
                         place_block = true;
+                    } else if (event.button.button == c.SDL_BUTTON_MIDDLE) {
+                        pick_block = true;
                     }
+                },
+                c.SDL_EVENT_MOUSE_BUTTON_UP => if (event.button.button == c.SDL_BUTTON_LEFT) {
+                    break_held = false;
                 },
                 c.SDL_EVENT_MOUSE_MOTION => if (captured) {
                     camera.look(event.motion.xrel, event.motion.yrel, settings.mouse_sensitivity);
                 },
                 c.SDL_EVENT_MOUSE_WHEEL => if (captured and event.wheel.y != 0) {
-                    const n = BlockId.placeable.len;
-                    selected = if (event.wheel.y < 0) (selected + 1) % n else (selected + n - 1) % n;
+                    game.inventory.scroll(if (event.wheel.y < 0) 1 else -1);
                 },
                 c.SDL_EVENT_KEY_DOWN => if (captured and !event.key.repeat) {
                     const sc = event.key.scancode;
                     if (sc == c.SDL_SCANCODE_ESCAPE) {
                         captured = setCaptured(window, false);
                     } else if (sc == c.SDL_SCANCODE_F) {
-                        player.setFlying(!player.flying);
+                        if (game.mode == .creative) player.setFlying(!player.flying);
+                    } else if (sc == c.SDL_SCANCODE_G) {
+                        game.setMode(if (game.mode == .creative) .survival else .creative, &player);
+                    } else if (sc == c.SDL_SCANCODE_Q) {
+                        throw_block = true;
                     } else if (sc >= c.SDL_SCANCODE_1 and sc <= c.SDL_SCANCODE_9) {
-                        const i: usize = @intCast(sc - c.SDL_SCANCODE_1);
-                        if (i < BlockId.placeable.len) selected = i;
+                        game.inventory.selected = @intCast(sc - c.SDL_SCANCODE_1);
                     }
                 },
                 else => {},
@@ -322,24 +345,29 @@ pub fn main(init: std.process.Init) !void {
         }
         while (physics_time >= physics_dt) : (physics_time -= physics_dt) {
             player.step(&world, input, camera.yaw, camera.pitch, physics_dt);
+            _ = game.step(&world, &player, physics_dt);
         }
         camera.position = player.eye(physics_time / physics_dt);
+        if (!captured) break_held = false;
 
         // block interaction
         target = raycast.cast(&world, camera.position, camera.forward(), reach);
-        if (target) |hit| {
-            if (break_block) {
-                try world.setBlock(hit.block[0], hit.block[1], hit.block[2], .air);
-                _ = c.SDL_PutAudioStreamData(stream, wave_sound, @intCast(wave_soundlen));
-                _ = c.SDL_ResumeAudioDevice(c.SDL_GetAudioStreamDevice(stream));
-            } else if (place_block and !std.meta.eql(hit.normal, .{ 0, 0, 0 })) {
-                const p = hit.adjacent();
-                if (!player.intersectsBlock(p[0], p[1], p[2])) try world.setBlock(p[0], p[1], p[2], BlockId.placeable[selected]);
-            }
-            if (break_block or place_block) target = raycast.cast(&world, camera.position, camera.forward(), reach);
+        var changed = false;
+        if (try game.dig(&world, target, break_held, break_click, @min(dt_ms, 250) / 1000)) {
+            changed = true;
+            _ = c.SDL_PutAudioStreamData(stream, wave_sound, @intCast(wave_soundlen));
+            _ = c.SDL_ResumeAudioDevice(c.SDL_GetAudioStreamDevice(stream));
         }
-        break_block = false;
+        if (target) |hit| {
+            if (place_block and !changed) changed = try game.place(&world, &player, hit);
+            if (pick_block) game.pick(hit);
+        }
+        if (throw_block) try game.throwHeld(&player, camera.forward());
+        if (changed) target = raycast.cast(&world, camera.position, camera.forward(), reach);
+        break_click = false;
         place_block = false;
+        pick_block = false;
+        throw_block = false;
 
         const world_config: World.Config = .{
             .render_distance = settings.render_distance,
@@ -366,6 +394,28 @@ pub fn main(init: std.process.Init) !void {
         const eye_block = [3]i32{ @intFromFloat(@floor(camera.position[0])), @intFromFloat(@floor(camera.position[1])), @intFromFloat(@floor(camera.position[2])) };
         const underwater = world.isWater(eye_block[0], eye_block[1], eye_block[2]);
         voxel.setScene(frame_index, sceneUniforms(&settings, view_proj, underwater));
+
+        // overlays: dropped items, the crack on the block being broken, the HUD
+        var batch = overlay.batch(frame_index);
+        game.items.draw(&batch, camera.position, physics_time / physics_dt, ItemLight{ .world = &world, .daylight = settings.daylight() });
+        const items_range = batch.since(0);
+        const crack_first = batch.len;
+        if (game.crack()) |crack| {
+            const center: @Vector(3, f64) = .{ @as(f64, @floatFromInt(crack.block[0])) + 0.5, @as(f64, @floatFromInt(crack.block[1])) + 0.5, @as(f64, @floatFromInt(crack.block[2])) + 0.5 };
+            const rel: math.Vec3 = @floatCast(center - camera.position);
+            // a little larger than the block, so it doesn't z-fight with its faces
+            batch.cube(rel, 0.502, 0, @splat(@intFromEnum(Tile.crack(crack.stage))), @splat(sprites.white));
+        }
+        const crack_range = batch.since(crack_first);
+        const hud_first = batch.len;
+        if (bench == null) hud.build(&batch, @floatFromInt(swapchain.extent.width), @floatFromInt(swapchain.extent.height), .{
+            .inventory = &game.inventory,
+            .survival = game.mode == .survival,
+            .health = game.health,
+            .max_health = Game.max_health,
+            .hurt = game.hurt_timer / Game.hurt_seconds,
+        });
+        const hud_range = batch.since(hud_first);
 
         // record
         const cmd = frame.cmd;
@@ -409,10 +459,12 @@ pub fn main(init: std.process.Init) !void {
         // near to far, so the chunks fill the depth buffer before the distant terrain
         world.draw(cmd, &voxel, camera.position, frustum, world_config, if (settings.lod_enabled) &lod.columns else null);
         if (settings.lod_enabled) lod.draw(cmd, &voxel, camera.position, frustum);
+        overlay.draw(cmd, &voxel, frame_index, swapchain.extent, .world, items_range);
         if (settings.skybox) sky_pipeline.draw(cmd, &voxel, frame_index, &camera, settings.fov_deg, aspect);
         // blended last, over the sky too
         voxel.bind(cmd, frame_index, swapchain.extent, &arena, .translucent);
         world.drawTranslucent(cmd, &voxel);
+        overlay.draw(cmd, &voxel, frame_index, swapchain.extent, .decal, crack_range);
         outline.bind(cmd, &voxel, frame_index);
         if (target) |hit| {
             const corner: @Vector(3, f64) = .{ @floatFromInt(hit.block[0]), @floatFromInt(hit.block[1]), @floatFromInt(hit.block[2]) };
@@ -420,11 +472,12 @@ pub fn main(init: std.process.Init) !void {
             outline.drawBlock(cmd, rel);
         }
         if (captured) outline.drawCrosshair(cmd, swapchain.extent);
+        overlay.draw(cmd, &voxel, frame_index, swapchain.extent, .screen, hud_range);
 
         // dvui draws on top, inside the same rendering scope
         try renderer.beginFrame(cmd, swapchain.extent);
         try win.begin(backend.nanoTime());
-        const actions = debug_ui.draw(&settings, &player, .{
+        const actions = debug_ui.draw(&settings, &player, &game, .{
             .frame_ms = frame_ms,
             .camera = &camera,
             .world = world.stats,
@@ -436,7 +489,6 @@ pub fn main(init: std.process.Init) !void {
                 const p = hit.adjacent();
                 break :blk world.getLight(p[0], p[1], p[2]);
             } else null,
-            .selected = BlockId.placeable[selected],
         });
         _ = try win.end(.{});
         const recorded = try renderer.endFrame();
@@ -489,14 +541,15 @@ pub fn main(init: std.process.Init) !void {
 
         if (actions.regenerate) {
             // the player stays with the world it was in, and returns to where it was in the new one
-            saveGame(&world, &player, &camera, &settings);
+            saveGame(&world, &player, &camera, &settings, &game);
             try world.regenerate(&arena, settings.seed, frame_counter);
             try lod.clear(&arena, frame_counter);
-            restorePlayer(&world, &player, &camera, &settings);
+            game.spawn = spawnPoint(&world);
+            restorePlayer(&world, &player, &camera, &settings, &game);
             last_save_ns = now_ns;
         }
         if (now_ns - last_save_ns > autosave_interval_ns) {
-            saveGame(&world, &player, &camera, &settings);
+            saveGame(&world, &player, &camera, &settings, &game);
             last_save_ns = now_ns;
         }
         if (actions.volume_changed) _ = c.SDL_SetAudioStreamGain(stream, settings.master_volume);
@@ -530,7 +583,7 @@ fn openSavesDir(io: std.Io, gpa: std.mem.Allocator) ?std.Io.Dir {
 }
 
 /// Writes the edited chunks and the player; failures are logged, not fatal.
-fn saveGame(world: *World, player: *const Player, camera: *const Camera, settings: *const Settings) void {
+fn saveGame(world: *World, player: *const Player, camera: *const Camera, settings: *const Settings, game: *const Game) void {
     world.saveAll() catch |err| log.err("saving the world failed: {t}", .{err});
     world.savePlayer(.{
         .position = player.position,
@@ -538,19 +591,58 @@ fn saveGame(world: *World, player: *const Player, camera: *const Camera, setting
         .pitch = camera.pitch,
         .flying = player.flying,
         .time_of_day = settings.time_of_day,
+        .creative = game.mode == .creative,
+        .health = game.health,
+        .inventory = game.inventory,
     }) catch |err| log.err("saving the player failed: {t}", .{err});
 }
 
-/// Puts the player where the world's save left it, if it has one.
-fn restorePlayer(world: *World, player: *Player, camera: *Camera, settings: *Settings) void {
-    const saved = world.savedPlayer() orelse return;
+/// Puts the player where the world's save left it, or at the spawn point with an empty
+/// hotbar in a new world (keeping the game mode).
+fn restorePlayer(world: *World, player: *Player, camera: *Camera, settings: *Settings, game: *Game) void {
+    game.items.items.clearRetainingCapacity();
+    game.mining = null;
+    game.hurt_timer = 0;
+    const saved = world.savedPlayer() orelse {
+        player.* = .init(game.spawn);
+        camera.position = player.eye(1);
+        game.health = Game.max_health;
+        game.inventory = .{};
+        game.setMode(game.mode, player);
+        return;
+    };
     player.* = .init(saved.position);
-    player.setFlying(saved.flying);
     camera.yaw = saved.yaw;
     camera.pitch = saved.pitch;
     camera.position = player.eye(1);
     settings.time_of_day = saved.time_of_day;
+    game.health = if (saved.health == 0) Game.max_health else @min(saved.health, Game.max_health);
+    game.inventory = saved.inventory;
+    game.setMode(if (saved.creative) .creative else .survival, player);
+    if (game.mode == .creative) player.setFlying(saved.flying);
 }
+
+/// On the terrain at the origin.
+fn spawnPoint(world: *const World) @Vector(3, f64) {
+    return .{ 0.5, @floatFromInt(world.terrain.height(0, 0) + 1), 0.5 };
+}
+
+/// Brightness of dropped items from the light where they are, like the chunk shader's.
+const ItemLight = struct {
+    world: *const World,
+    daylight: f32,
+
+    pub fn at(self: ItemLight, p: @Vector(3, f64)) f32 {
+        const x: i32 = @intFromFloat(@floor(p[0]));
+        const y: i32 = @intFromFloat(@floor(p[1] + 0.1));
+        const z: i32 = @intFromFloat(@floor(p[2]));
+        const light = self.world.getLight(x, y, z) orelse 0xf0;
+        const sky = @as(f32, @floatFromInt(light >> 4)) / 15 * std.math.lerp(night_ambient, 1, self.daylight);
+        const block = @as(f32, @floatFromInt(light & 0xf)) / 15;
+        const level = @max(sky, block);
+        return 0.05 + 0.95 * level / (4 - 3 * level);
+    }
+};
 
 /// SDL3 only `dlopen`s leaf names ("libvulkan.1.dylib", ...) when hunting for the Vulkan
 /// loader, and modern dyld no longer searches /usr/local/lib for those, so a LunarG or

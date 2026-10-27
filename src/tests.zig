@@ -12,4 +12,9 @@ test {
     _ = @import("world/world.zig");
     _ = @import("world/workers.zig");
     _ = @import("world/save.zig");
+    _ = @import("gfx/sprites.zig");
+    _ = @import("ui/hud.zig");
+    _ = @import("game/inventory.zig");
+    _ = @import("game/items.zig");
+    _ = @import("game/game.zig");
 }

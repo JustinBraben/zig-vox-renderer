@@ -51,6 +51,10 @@ on_ground: bool = false,
 /// some of the body is in water (as of the last step)
 in_water: bool = false,
 flying: bool = false,
+/// highest feet height since leaving the ground; null on the ground, in water and flying
+fall_peak: ?f64 = null,
+/// how far the player fell before last landing, until `takeLanding`
+landing: ?f64 = null,
 
 pub fn init(position: Pos) Self {
     return .{ .position = position, .prev_position = position };
@@ -89,6 +93,21 @@ pub fn step(self: *Self, world: anytype, input: Input, yaw: f32, pitch: f32, dt:
     // one axis at a time, so blocked movement slides along walls
     self.on_ground = false;
     inline for (.{ 1, 0, 2 }) |axis| self.moveAxis(world, axis, self.velocity[axis] * dt);
+
+    if (self.in_water) {
+        self.fall_peak = null;
+    } else if (self.on_ground) {
+        if (self.fall_peak) |peak| self.landing = peak - self.position[1];
+        self.fall_peak = null;
+    } else {
+        self.fall_peak = @max(self.fall_peak orelse self.prev_position[1], self.position[1]);
+    }
+}
+
+/// How many blocks the player fell before landing since the last call, if it landed.
+pub fn takeLanding(self: *Self) ?f64 {
+    defer self.landing = null;
+    return self.landing;
 }
 
 /// Camera position, interpolated `alpha` (0..1) of the way from the previous step.
@@ -110,6 +129,7 @@ pub fn intersectsBlock(self: *const Self, x: i32, y: i32, z: i32) bool {
 pub fn setFlying(self: *Self, flying: bool) void {
     self.flying = flying;
     self.on_ground = false;
+    self.fall_peak = null;
 }
 
 fn fly(self: *Self, input: Input, yaw: f32, pitch: f32, dt: f64) void {
@@ -268,6 +288,27 @@ test "block intersection" {
     try std.testing.expect(!p.intersectsBlock(0, 2, 0));
     try std.testing.expect(!p.intersectsBlock(1, 0, 0));
     try std.testing.expect(!p.intersectsBlock(0, -1, 0));
+}
+
+test "reports how far it fell when it lands, from the top of a jump" {
+    var p = Self.init(.{ 0.5, 10, 0.5 });
+    simulate(&p, .{}, 2);
+    try std.testing.expectApproxEqAbs(@as(f64, 10), p.takeLanding().?, 1e-9);
+    try std.testing.expectEqual(null, p.takeLanding());
+
+    const dt = 1.0 / 60.0;
+    p.step(TestWorld{}, .{ .jump = true }, 0, 0, dt);
+    simulate(&p, .{}, 1);
+    const fall = p.takeLanding().?;
+    try std.testing.expect(fall > 1.1 and fall < 1.4);
+}
+
+test "falling into water breaks the fall" {
+    var p = Self.init(.{ 0.5, 30, 0.5 });
+    const dt = 1.0 / 60.0;
+    for (0..600) |_| p.step(PoolWorld{}, .{}, 0, 0, dt);
+    try std.testing.expect(p.on_ground);
+    try std.testing.expectEqual(null, p.takeLanding());
 }
 
 test "sinks slowly in water and swims up while jump is held" {

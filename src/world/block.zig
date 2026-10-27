@@ -74,6 +74,31 @@ pub const BlockId = enum(u8) {
         };
     }
 
+    /// Seconds to break by hand in survival; there are no tools yet, so the hard blocks
+    /// take less than they would bare-handed in other games.
+    pub fn breakSeconds(self: BlockId) f32 {
+        return switch (self) {
+            .leaves, .snow => 0.3,
+            .glass, .lamp => 0.45,
+            .dirt, .sand => 0.75,
+            .grass, .gravel, .clay => 0.9,
+            .log, .planks => 2.0,
+            .stone => 2.25,
+            .cobblestone => 2.5,
+            else => 1,
+        };
+    }
+
+    /// What breaking the block in survival gives, if anything.
+    pub fn drop(self: BlockId) ?BlockId {
+        return switch (self) {
+            .air, .water, .leaves, .glass => null,
+            .grass => .dirt,
+            .stone => .cobblestone,
+            else => self,
+        };
+    }
+
     /// Block light given off, 0..15.
     pub fn lightEmission(self: BlockId) u4 {
         return if (self == .lamp) 15 else 0;
@@ -154,8 +179,33 @@ pub const Tile = enum(u8) {
     water,
     glass,
     lamp,
+    /// overlay on a block being broken, from just started to almost done
+    crack_0,
+    crack_1,
+    crack_2,
+    crack_3,
+    crack_4,
+    crack_5,
+    crack_6,
+    crack_7,
+    crack_8,
+    crack_9,
 
     pub const count = @typeInfo(Tile).@"enum".fields.len;
+    pub const crack_stages = 10;
+
+    /// Crack overlay for `stage` in 0..crack_stages.
+    pub fn crack(stage: usize) Tile {
+        return @enumFromInt(@intFromEnum(Tile.crack_0) + @min(stage, crack_stages - 1));
+    }
+};
+
+/// Some number of one block, as held in an inventory slot; empty when `count` is 0.
+pub const Stack = struct {
+    block: BlockId = .air,
+    count: u8 = 0,
+
+    pub const max = 64;
 };
 
 fn all(tile: Tile) [6]Tile {

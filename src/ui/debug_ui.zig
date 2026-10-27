@@ -11,6 +11,7 @@ const ChunkPos = @import("../world/chunk.zig").ChunkPos;
 const BlockId = @import("../world/block.zig").BlockId;
 const raycast = @import("../world/raycast.zig");
 const Player = @import("../player.zig");
+const Game = @import("../game/game.zig");
 
 pub const Stats = struct {
     frame_ms: f32,
@@ -23,7 +24,6 @@ pub const Stats = struct {
     target: ?raycast.Hit,
     /// packed light of the block in front of the targeted face
     target_light: ?u8,
-    selected: BlockId,
 };
 
 pub const Actions = struct {
@@ -31,7 +31,7 @@ pub const Actions = struct {
     volume_changed: bool = false,
 };
 
-pub fn draw(settings: *Settings, player: *Player, stats: Stats) Actions {
+pub fn draw(settings: *Settings, player: *Player, game: *Game, stats: Stats) Actions {
     var actions: Actions = .{};
 
     var float = dvui.floatingWindow(@src(), .{}, .{
@@ -79,20 +79,45 @@ pub fn draw(settings: *Settings, player: *Player, stats: Stats) Actions {
         defer section.deinit();
         dvui.labelNoFmt(@src(), "Click the world to play, Esc to release the mouse", .{}, .{});
         dvui.labelNoFmt(@src(), "WASD: move, Space: jump / up, Ctrl: down, Shift: sprint", .{}, .{});
-        dvui.labelNoFmt(@src(), "LMB: break, RMB: place, wheel / 1-9: block, F: fly", .{}, .{});
+        dvui.labelNoFmt(@src(), "LMB: break (hold in survival), RMB: place, Q: throw", .{}, .{});
+        dvui.labelNoFmt(@src(), "wheel / 1-9: slot, MMB: pick block (creative)", .{}, .{});
+        dvui.labelNoFmt(@src(), "G: survival / creative, F: fly (creative)", .{}, .{});
+        {
+            var row = dvui.box(@src(), .{ .dir = .horizontal }, .{ .expand = .horizontal });
+            defer row.deinit();
+            dvui.labelNoFmt(@src(), "Mode", .{}, .{ .gravity_y = 0.5 });
+            if (dvui.radio(@src(), game.mode == .survival, "Survival", .{})) game.setMode(.survival, player);
+            if (dvui.radio(@src(), game.mode == .creative, "Creative", .{})) game.setMode(.creative, player);
+        }
+        if (game.mode == .survival) dvui.label(@src(), "health {d} / {d}", .{ game.health, Game.max_health }, .{});
         const p = player.position;
         const v = player.velocity;
         dvui.label(@src(), "feet {d:.2} {d:.2} {d:.2}", .{ p[0], p[1], p[2] }, .{});
         dvui.label(@src(), "velocity {d:.2} {d:.2} {d:.2}{s}", .{ v[0], v[1], v[2], if (player.on_ground) " (on ground)" else "" }, .{});
-        dvui.label(@src(), "selected: {s}", .{@tagName(stats.selected)}, .{});
+        if (game.inventory.held()) |held| {
+            dvui.label(@src(), "holding: {s}", .{@tagName(held)}, .{});
+        } else {
+            dvui.labelNoFmt(@src(), "holding: nothing", .{}, .{});
+        }
+        dvui.label(@src(), "dropped items: {d}", .{game.items.items.items.len}, .{});
         if (stats.target) |t| {
             dvui.label(@src(), "target: {s} at {d} {d} {d}, face {d} {d} {d}", .{ @tagName(t.id), t.block[0], t.block[1], t.block[2], t.normal[0], t.normal[1], t.normal[2] }, .{});
         } else {
             dvui.labelNoFmt(@src(), "target: none", .{}, .{});
         }
         if (stats.target_light) |l| dvui.label(@src(), "light in front: sky {d}, block {d}", .{ l >> 4, l & 0xf }, .{});
-        var flying = player.flying;
-        if (dvui.checkbox(@src(), &flying, "Fly (F)", .{})) player.setFlying(flying);
+        if (game.mode == .creative) {
+            var flying = player.flying;
+            if (dvui.checkbox(@src(), &flying, "Fly (F)", .{})) player.setFlying(flying);
+            dvui.labelNoFmt(@src(), "Put in the selected slot:", .{}, .{});
+            var grid = dvui.flexbox(@src(), .{}, .{ .expand = .horizontal });
+            defer grid.deinit();
+            for (BlockId.placeable, 0..) |id, i| {
+                if (dvui.button(@src(), @tagName(id), .{}, .{ .id_extra = i, .margin = .all(1) })) {
+                    game.inventory.slots[game.inventory.selected] = .{ .block = id, .count = 1 };
+                }
+            }
+        }
     }
 
     if (dvui.expander(@src(), "Camera", .{}, .{ .expand = .horizontal })) {

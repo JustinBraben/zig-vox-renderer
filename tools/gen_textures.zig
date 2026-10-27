@@ -101,7 +101,40 @@ fn texel(tile: Tile, x: i32, y: i32) Rgba {
             if (d == -6 and x > 6 and x < 10) break :blk .{ 0xf4, 0xf8, 0xfc, 160 };
             break :blk .{ 0xc8, 0xe0, 0xf0, 36 };
         },
+        .crack_0, .crack_1, .crack_2, .crack_3, .crack_4, .crack_5, .crack_6, .crack_7, .crack_8, .crack_9 => blk: {
+            const stage = @intFromEnum(tile) - @intFromEnum(Tile.crack_0);
+            const appears = crackMap()[@intCast(y)][@intCast(x)];
+            break :blk if (appears <= stage) .{ 0x1a, 0x18, 0x16, 0xd8 } else .{ 0, 0, 0, 0 };
+        },
     };
+}
+
+/// For each pixel, the crack stage it first shows up in (255 = never): a few wandering
+/// cracks that grow out from the middle, the later ones starting later.
+fn crackMap() [tile_size][tile_size]u8 {
+    var map: [tile_size][tile_size]u8 = @splat(@splat(255));
+    const seed: u32 = 0x5bd1e995;
+    const branches = 7;
+    const longest = 14;
+    for (0..branches) |b| {
+        const bi: i32 = @intCast(b);
+        var dir = (@as(f32, @floatFromInt(b)) + 0.5 * hash(seed, bi, 0)) * 2 * std.math.pi / branches;
+        var px = 7.5 + 1.5 * @cos(dir);
+        var py = 7.5 + 1.5 * @sin(dir);
+        const len: i32 = 5 + @as(i32, @intFromFloat(hash(seed, bi, 1) * (longest - 5)));
+        var step: i32 = 0;
+        while (step < len) : (step += 1) {
+            if (px < 0 or py < 0 or px >= tile_size or py >= tile_size) break;
+            const t = @as(f32, @floatFromInt(step + bi)) / (longest + branches);
+            const stage: u8 = @intFromFloat(@min(t * Tile.crack_stages, Tile.crack_stages - 1));
+            const cell = &map[@intFromFloat(py)][@intFromFloat(px)];
+            cell.* = @min(cell.*, stage);
+            dir += (hash(seed, bi, step + 2) - 0.5) * 1.1;
+            px += @cos(dir);
+            py += @sin(dir);
+        }
+    }
+    return map;
 }
 
 fn grassTop(x: i32, y: i32, seed: u32) Rgba {

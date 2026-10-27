@@ -8,6 +8,10 @@
 //!
 //! Region file, little endian: "VOXR", u32 version, u32 chunk count, then per chunk
 //! i32 x, y, z, u32 byte count and the encoded blocks: runs of (u16 length, u8 block).
+//!
+//! player.dat, little endian: "VOXP", u32 version, f64 x, y, z, f32 yaw, pitch,
+//! time of day, u8 flying; since version 2 also u8 creative, health, selected slot and
+//! per hotbar slot u8 block, count.
 
 const std = @import("std");
 const Io = std.Io;
@@ -15,6 +19,7 @@ const Allocator = std.mem.Allocator;
 const chunk = @import("chunk.zig");
 const ChunkPos = chunk.ChunkPos;
 const BlockId = @import("block.zig").BlockId;
+const Inventory = @import("../game/inventory.zig");
 
 const log = std.log.scoped(.save);
 
@@ -25,7 +30,8 @@ pub const region_size = 16;
 
 const region_magic = "VOXR";
 const player_magic = "VOXP";
-const version = 1;
+const region_version = 1;
+const player_version = 2;
 /// Largest file read.
 const max_file_size = 64 * 1024 * 1024;
 
@@ -43,6 +49,10 @@ pub const Player = struct {
     pitch: f32,
     flying: bool,
     time_of_day: f32,
+    /// version 1 saves predate survival mode, so they load in creative
+    creative: bool = true,
+    health: u8 = 20,
+    inventory: Inventory = .{},
 };
 
 io: Io,
@@ -127,22 +137,30 @@ pub fn flush(self: *Self) !void {
 
 pub fn writePlayer(self: *Self, player: Player) !void {
     const dir = self.dir orelse return;
-    var data: [player_magic.len + 4 + 3 * 8 + 4 * 3 + 1]u8 = undefined;
+    var data: [player_magic.len + 4 + 3 * 8 + 4 * 3 + 4 + 2 * Inventory.size]u8 = undefined;
     var w: Writer = .{ .buf = &data };
     w.bytes(player_magic);
-    w.int(u32, version);
+    w.int(u32, player_version);
     for (player.position) |v| w.int(u64, @bitCast(v));
     w.int(u32, @bitCast(player.yaw));
     w.int(u32, @bitCast(player.pitch));
     w.int(u32, @bitCast(player.time_of_day));
     w.int(u8, @intFromBool(player.flying));
+    w.int(u8, @intFromBool(player.creative));
+    w.int(u8, player.health);
+    w.int(u8, @intCast(player.inventory.selected));
+    for (player.inventory.slots) |slot| {
+        w.int(u8, @intFromEnum(slot.block));
+        w.int(u8, slot.count);
+    }
+    std.debug.assert(w.at == data.len);
     try writeAtomically(self.io, dir, "player.dat", &data);
 }
 
 /// The player as last written, or null when there is none (or it can't be read).
 pub fn readPlayer(self: *Self) ?Player {
     const dir = self.dir orelse return null;
-    var buf: [64]u8 = undefined;
+    var buf: [128]u8 = undefined;
     const data = dir.readFile(self.io, "player.dat", &buf) catch return null;
     var r: Reader = .{ .data = data };
     const player = readPlayerData(&r) catch {
@@ -155,13 +173,23 @@ pub fn readPlayer(self: *Self) ?Player {
 
 fn readPlayerData(r: *Reader) !Player {
     if (!std.mem.eql(u8, try r.bytes(player_magic.len), player_magic)) return error.BadMagic;
-    if (try r.int(u32) != version) return error.UnsupportedVersion;
-    var player: Player = undefined;
-    for (&player.position) |*v| v.* = @bitCast(try r.int(u64));
+    const v = try r.int(u32);
+    if (v < 1 or v > player_version) return error.UnsupportedVersion;
+    var player: Player = .{ .position = undefined, .yaw = undefined, .pitch = undefined, .flying = undefined, .time_of_day = undefined };
+    for (&player.position) |*p| p.* = @bitCast(try r.int(u64));
     player.yaw = @bitCast(try r.int(u32));
     player.pitch = @bitCast(try r.int(u32));
     player.time_of_day = @bitCast(try r.int(u32));
     player.flying = try r.int(u8) != 0;
+    if (v < 2) return player;
+    player.creative = try r.int(u8) != 0;
+    player.health = try r.int(u8);
+    player.inventory.selected = try r.int(u8);
+    for (&player.inventory.slots) |*slot| {
+        slot.block = @enumFromInt(try r.int(u8));
+        slot.count = try r.int(u8);
+    }
+    player.inventory.sanitize();
     return player;
 }
 
@@ -191,7 +219,7 @@ fn readRegion(self: *Self, region: [2]i32) !void {
 fn decodeRegion(self: *Self, data: []const u8) !void {
     var r: Reader = .{ .data = data };
     if (!std.mem.eql(u8, try r.bytes(region_magic.len), region_magic)) return error.BadMagic;
-    if (try r.int(u32) != version) return error.UnsupportedVersion;
+    if (try r.int(u32) != region_version) return error.UnsupportedVersion;
     const count = try r.int(u32);
     for (0..count) |_| {
         const pos: ChunkPos = .{ .x = try r.int(i32), .y = try r.int(i32), .z = try r.int(i32) };
@@ -206,7 +234,7 @@ fn decodeRegion(self: *Self, data: []const u8) !void {
 
 fn encodeRegion(self: *const Self, region: [2]i32, out: *std.ArrayList(u8)) !void {
     try out.appendSlice(self.allocator, region_magic);
-    try appendInt(self.allocator, out, u32, version);
+    try appendInt(self.allocator, out, u32, region_version);
     const count_at = out.items.len;
     try appendInt(self.allocator, out, u32, 0);
     var count: u32 = 0;
@@ -345,7 +373,9 @@ test "saved chunks and the player come back after reopening" {
     defer tmp.cleanup();
     const blocks = try testBlocks();
     defer testing.allocator.destroy(blocks);
-    const player: Player = .{ .position = .{ 1.5, 70, -3.25 }, .yaw = 90, .pitch = -10, .flying = true, .time_of_day = 18.5 };
+    var player: Player = .{ .position = .{ 1.5, 70, -3.25 }, .yaw = 90, .pitch = -10, .flying = true, .time_of_day = 18.5, .creative = false, .health = 7 };
+    _ = player.inventory.add(.cobblestone, 70);
+    player.inventory.selected = 4;
     {
         var save = try open(testing.io, testing.allocator, tmp.dir, 42);
         defer save.deinit();
@@ -370,4 +400,20 @@ test "saved chunks and the player come back after reopening" {
     defer other.deinit();
     try testing.expectEqual(null, try other.load(testing.allocator, .{ .x = 3, .y = 0, .z = 3 }));
     try testing.expectEqual(null, other.readPlayer());
+}
+
+test "a version 1 player loads in creative with full health" {
+    var data: [player_magic.len + 4 + 3 * 8 + 4 * 3 + 1]u8 = undefined;
+    var w: Writer = .{ .buf = &data };
+    w.bytes(player_magic);
+    w.int(u32, 1);
+    for ([3]f64{ 1, 2, 3 }) |v| w.int(u64, @bitCast(v));
+    for ([3]f32{ 10, 20, 6 }) |v| w.int(u32, @bitCast(v));
+    w.int(u8, 1);
+    var r: Reader = .{ .data = &data };
+    const player = try readPlayerData(&r);
+    try testing.expectEqual([3]f64{ 1, 2, 3 }, player.position);
+    try testing.expect(player.flying and player.creative);
+    try testing.expectEqual(20, player.health);
+    try testing.expectEqual(null, player.inventory.held());
 }
