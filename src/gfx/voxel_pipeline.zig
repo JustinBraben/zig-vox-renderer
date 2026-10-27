@@ -32,6 +32,8 @@ pub const Scene = extern struct {
     fog_color: [4]f32,
     /// x: fog start, y: fog end (0 = no fog), z: ao strength, w: 1 = fog towards the skybox
     params: [4]f32,
+    /// rgb: block light color * intensity, w: brightness of the skybox (daylight)
+    light: [4]f32,
 };
 
 pub const PushConstants = extern struct {

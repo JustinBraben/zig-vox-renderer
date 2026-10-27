@@ -406,6 +406,8 @@ fn emitFace(allocator: Allocator, out: *std.ArrayList(mesher.Vertex), face_index
             c.* = @intCast(std.math.clamp(if (high) hi[a] else lo[a], 0, 63));
         }
         vertex.* = .init(p[0], p[1], p[2], face_index, 3, color);
+        // no light data this far out: lit as open ground
+        vertex.data |= mesher.full_sky;
     }
 }
 

@@ -307,6 +307,10 @@ pub fn main(init: std.process.Init) !void {
         // player physics at a fixed rate; the camera interpolates between the last two steps
         const input: Player.Input = if (captured) playerInput(&settings) else .{ .fly_speed = settings.move_speed };
         physics_time += @min(dt_ms / 1000, 0.25);
+        if (settings.day_cycle) {
+            const hours = @min(dt_ms, 250) / 1000 / (settings.day_minutes * 60) * 24;
+            settings.time_of_day = @mod(settings.time_of_day + hours, 24);
+        }
         while (physics_time >= physics_dt) : (physics_time -= physics_dt) {
             player.step(&world, input, camera.yaw, camera.pitch, physics_dt);
         }
@@ -335,6 +339,7 @@ pub fn main(init: std.process.Init) !void {
             .gen_budget = @intCast(settings.gen_budget),
             .mesh_budget = @intCast(settings.mesh_budget),
         };
+        world.setFastLeaves(settings.fast_leaves);
         try world.update(&arena, camera.position, world_config, frame_counter);
         if (settings.lod_enabled) {
             try lod.update(&arena, &world, camera.position, world_config, .{
@@ -361,7 +366,9 @@ pub fn main(init: std.process.Init) !void {
         transitionImage(device, cmd, swapchain.images[image_index], .undefined, .color_attachment_optimal);
         depth.transition(cmd);
 
-        const sky = settings.sky_color;
+        // the clear color is written as is (sRGB): scale it roughly like the linear sky
+        const sky_scale = std.math.pow(f32, skyBrightness(&settings), 1.0 / 2.2);
+        const sky = [3]f32{ settings.sky_color[0] * sky_scale, settings.sky_color[1] * sky_scale, settings.sky_color[2] * sky_scale };
         device.cmdBeginRendering(cmd, &.{
             .render_area = .{ .offset = .{ .x = 0, .y = 0 }, .extent = swapchain.extent },
             .layer_count = 1,
@@ -416,6 +423,10 @@ pub fn main(init: std.process.Init) !void {
             .arena_used = arena.used,
             .arena_capacity = arena.capacity,
             .target = target,
+            .target_light = if (target) |hit| blk: {
+                const p = hit.adjacent();
+                break :blk world.getLight(p[0], p[1], p[2]);
+            } else null,
             .selected = BlockId.placeable[selected],
         });
         _ = try win.end(.{});
@@ -612,12 +623,22 @@ fn setCaptured(window: *c.SDL_Window, capture: bool) bool {
 const underwater_fog_color = [3]f32{ 0.02, 0.08, 0.2 };
 const underwater_fog_end = 24;
 
+/// Brightness of the sky and the ambient light at night, relative to the day.
+const night_sky = 0.05;
+const night_ambient = 0.08;
+
+fn skyBrightness(settings: *const Settings) f32 {
+    return std.math.lerp(night_sky, 1, settings.daylight());
+}
+
 fn sceneUniforms(settings: *const Settings, view_proj: math.Mat4, underwater: bool) VoxelPipeline.Scene {
-    const sun_dir = math.fromDirection(settings.sun_azimuth, settings.sun_elevation);
+    const sun_dir = math.fromDirection(settings.sunAzimuth(), settings.sunElevation());
     const fog = settings.fogRange() orelse .{ 0, 0 };
+    const sky = skyBrightness(settings);
+    const ambient = settings.ambient_intensity * std.math.lerp(night_ambient, 1, settings.daylight());
     if (underwater) {
         var scene = sceneUniforms(settings, view_proj, false);
-        scene.fog_color = .{ underwater_fog_color[0], underwater_fog_color[1], underwater_fog_color[2], 1 };
+        scene.fog_color = .{ underwater_fog_color[0] * sky, underwater_fog_color[1] * sky, underwater_fog_color[2] * sky, 1 };
         scene.params[0] = 0;
         scene.params[1] = underwater_fog_end;
         // flat fog color instead of the skybox
@@ -627,11 +648,16 @@ fn sceneUniforms(settings: *const Settings, view_proj: math.Mat4, underwater: bo
     return .{
         .view_proj = view_proj,
         .sun_dir = .{ sun_dir[0], sun_dir[1], sun_dir[2], 0 },
-        .sun_color = linearColor(settings.sun_color, settings.sun_intensity),
-        .sky_color = linearColor(settings.sky_color, settings.ambient_intensity),
-        .ground_color = linearColor(settings.ground_color, settings.ambient_intensity),
-        .fog_color = linearColor(settings.sky_color, 1),
+        .sun_color = linearColor(settings.sun_color, settings.sun_intensity * settings.sunlight()),
+        .sky_color = linearColor(settings.sky_color, ambient),
+        .ground_color = linearColor(settings.ground_color, ambient),
+        .fog_color = linearColor(settings.sky_color, sky),
         .params = .{ fog[0], fog[1], if (settings.ao_enabled) settings.ao_strength else 0, if (settings.skybox) 1 else 0 },
+        .light = blk: {
+            var light = linearColor(settings.block_light_color, settings.block_light_intensity);
+            light[3] = sky;
+            break :blk light;
+        },
     };
 }
 

@@ -1,5 +1,16 @@
 #version 450
 
+layout(set = 0, binding = 0) uniform Scene {
+    mat4 view_proj;
+    vec4 sun_dir;
+    vec4 sun_color;
+    vec4 sky_color;
+    vec4 ground_color;
+    vec4 fog_color;
+    vec4 params;
+    vec4 light; // w: sky brightness (daylight)
+} scene;
+
 layout(set = 0, binding = 1) uniform samplerCube sky;
 
 layout(location = 0) in vec3 v_dir;
@@ -13,6 +24,6 @@ vec3 linearToSrgb(vec3 c) {
 
 void main() {
     // the cubemap is sRGB, so this is linear
-    vec3 color = texture(sky, normalize(v_dir)).rgb;
+    vec3 color = texture(sky, normalize(v_dir)).rgb * scene.light.w;
     out_color = vec4(linearToSrgb(color), 1.0);
 }

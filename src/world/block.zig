@@ -17,6 +17,7 @@ pub const BlockId = enum(u8) {
     planks,
     water,
     glass,
+    lamp,
     _,
 
     /// Every named block except air, in declaration order (the player's block palette).
@@ -62,6 +63,22 @@ pub const BlockId = enum(u8) {
         return self != .air and self != .water;
     }
 
+    /// How much light loses passing into this block, beyond the usual 1 per block;
+    /// 15 stops it.
+    pub fn lightOpacity(self: BlockId) u4 {
+        return switch (self.layer()) {
+            .none => 0,
+            .opaque_cube => 15,
+            .cutout => 1,
+            .translucent => if (self == .water) 1 else 0,
+        };
+    }
+
+    /// Block light given off, 0..15.
+    pub fn lightEmission(self: BlockId) u4 {
+        return if (self == .lamp) 15 else 0;
+    }
+
     /// Whether the face of `self` towards `neighbor` is drawn.
     pub fn faceVisible(self: BlockId, neighbor: BlockId) bool {
         if (neighbor.isOpaque()) return false;
@@ -88,6 +105,7 @@ pub const BlockId = enum(u8) {
             .planks => all(.planks),
             .water => all(.water),
             .glass => all(.glass),
+            .lamp => all(.lamp),
             _ => null,
         };
     }
@@ -110,6 +128,7 @@ pub const BlockId = enum(u8) {
             .planks => rgb(0xb0, 0x8c, 0x56),
             .water => rgb(0x3a, 0x6e, 0xc8),
             .glass => rgb(0xc8, 0xe0, 0xf0),
+            .lamp => rgb(0xf4, 0xc8, 0x6a),
             _ => rgb(0xff, 0x00, 0xff),
         };
     }
@@ -134,6 +153,7 @@ pub const Tile = enum(u8) {
     planks,
     water,
     glass,
+    lamp,
 
     pub const count = @typeInfo(Tile).@"enum".fields.len;
 };

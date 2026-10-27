@@ -83,6 +83,15 @@ fn texel(tile: Tile, x: i32, y: i32) Rgba {
             c[3] = 170;
             break :blk c;
         },
+        .lamp => blk: {
+            // a warm glowing pane in a dark frame, brightest in the middle
+            const edge = x == 0 or y == 0 or x == tile_size - 1 or y == tile_size - 1;
+            if (edge) break :blk shade(BlockId.log.color(), 0.7 + 0.15 * hash(seed, x, y));
+            const dx = @as(f32, @floatFromInt(x)) - 7.5;
+            const dy = @as(f32, @floatFromInt(y)) - 7.5;
+            const glow = 1 - @max(@abs(dx), @abs(dy)) / 8;
+            break :blk shade(BlockId.lamp.color(), 0.85 + 0.25 * glow + 0.08 * fbm(seed, x, y, 4));
+        },
         .glass => blk: {
             const edge = x == 0 or y == 0 or x == tile_size - 1 or y == tile_size - 1;
             if (edge) break :blk shade(rgb(0xd8, 0xe4, 0xec), 0.9 + 0.1 * hash(seed, x, y));

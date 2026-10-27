@@ -21,6 +21,8 @@ pub const Stats = struct {
     arena_capacity: u32,
     /// block under the crosshair
     target: ?raycast.Hit,
+    /// packed light of the block in front of the targeted face
+    target_light: ?u8,
     selected: BlockId,
 };
 
@@ -87,6 +89,7 @@ pub fn draw(settings: *Settings, player: *Player, stats: Stats) Actions {
         } else {
             dvui.labelNoFmt(@src(), "target: none", .{}, .{});
         }
+        if (stats.target_light) |l| dvui.label(@src(), "light in front: sky {d}, block {d}", .{ l >> 4, l & 0xf }, .{});
         var flying = player.flying;
         if (dvui.checkbox(@src(), &flying, "Fly (F)", .{})) player.setFlying(flying);
     }
@@ -105,9 +108,14 @@ pub fn draw(settings: *Settings, player: *Player, stats: Stats) Actions {
 
         _ = dvui.checkbox(@src(), &settings.skybox, "Skybox", .{});
 
+        heading(@src(), "Time of day");
+        _ = dvui.sliderEntry(@src(), "Hour: {d:0.1}", .{ .value = &settings.time_of_day, .min = 0, .max = 24, .interval = 0.1 }, .{ .expand = .horizontal });
+        _ = dvui.checkbox(@src(), &settings.day_cycle, "Day cycle", .{});
+        _ = dvui.sliderEntry(@src(), "Day length (min): {d:0.0}", .{ .value = &settings.day_minutes, .min = 1, .max = 60, .interval = 1 }, .{ .expand = .horizontal });
+
         heading(@src(), "Sun");
-        _ = dvui.sliderEntry(@src(), "Azimuth: {d:0.0}", .{ .value = &settings.sun_azimuth, .min = 0, .max = 360, .interval = 1 }, .{ .expand = .horizontal });
-        _ = dvui.sliderEntry(@src(), "Elevation: {d:0.0}", .{ .value = &settings.sun_elevation, .min = -10, .max = 90, .interval = 1 }, .{ .expand = .horizontal });
+        _ = dvui.sliderEntry(@src(), "Azimuth at noon: {d:0.0}", .{ .value = &settings.sun_azimuth, .min = 0, .max = 360, .interval = 1 }, .{ .expand = .horizontal });
+        _ = dvui.sliderEntry(@src(), "Elevation at noon: {d:0.0}", .{ .value = &settings.sun_elevation, .min = 10, .max = 90, .interval = 1 }, .{ .expand = .horizontal });
         _ = dvui.sliderEntry(@src(), "Intensity: {d:0.02}", .{ .value = &settings.sun_intensity, .min = 0, .max = 3 }, .{ .expand = .horizontal });
         colorSliders(@src(), &settings.sun_color);
 
@@ -117,6 +125,10 @@ pub fn draw(settings: *Settings, player: *Player, stats: Stats) Actions {
         colorSliders(@src(), &settings.sky_color);
         dvui.labelNoFmt(@src(), "Ground", .{}, .{});
         colorSliders(@src(), &settings.ground_color);
+
+        heading(@src(), "Block light (lamps)");
+        _ = dvui.sliderEntry(@src(), "Intensity: {d:0.02}", .{ .value = &settings.block_light_intensity, .min = 0, .max = 3 }, .{ .expand = .horizontal });
+        colorSliders(@src(), &settings.block_light_color);
 
         heading(@src(), "Ambient occlusion");
         _ = dvui.checkbox(@src(), &settings.ao_enabled, "Enabled", .{});
@@ -140,6 +152,7 @@ pub fn draw(settings: *Settings, player: *Player, stats: Stats) Actions {
         intSlider(@src(), "Gen / frame: {d:0.0}", &settings.gen_budget, 1, 128);
         intSlider(@src(), "Mesh / frame: {d:0.0}", &settings.mesh_budget, 1, 64);
         _ = dvui.checkbox(@src(), &settings.frustum_culling, "Frustum culling", .{});
+        _ = dvui.checkbox(@src(), &settings.fast_leaves, "Fast leaves", .{});
 
         heading(@src(), "Distant terrain");
         _ = dvui.checkbox(@src(), &settings.lod_enabled, "Enabled", .{});

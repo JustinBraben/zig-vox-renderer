@@ -8,4 +8,6 @@ test {
     _ = @import("world/mesher.zig");
     _ = @import("world/raycast.zig");
     _ = @import("world/lod.zig");
+    _ = @import("world/light.zig");
+    _ = @import("world/world.zig");
 }

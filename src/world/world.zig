@@ -9,6 +9,7 @@ const Chunk = chunk.Chunk;
 const ChunkPos = chunk.ChunkPos;
 const BlockId = @import("block.zig").BlockId;
 const mesher = @import("mesher.zig");
+const light = @import("light.zig");
 const Terrain = @import("terrain.zig");
 const math = @import("../math.zig");
 const MeshArena = @import("../gfx/mesh_arena.zig");
@@ -68,7 +69,10 @@ heightmaps: std.AutoHashMapUnmanaged([2]i32, *Terrain.Heightmap) = .empty,
 offsets: std.ArrayList([2]i32) = .empty,
 offsets_radius: i32 = -1,
 padded: *mesher.Padded,
+padded_light: *mesher.PaddedLight,
+mesh_options: mesher.Options = .{},
 meshes: mesher.Output = .{},
+light_queues: *light.Queues,
 /// translucent chunk draws of the frame, sorted back to front
 translucent_draws: std.ArrayList(TranslucentDraw) = .empty,
 scratch_keys: std.ArrayList(ChunkPos) = .empty,
@@ -95,6 +99,12 @@ pub fn init(allocator: Allocator, io: std.Io, seed: u64) !Self {
         .io = io,
         .terrain = .{ .seed = seed },
         .padded = try allocator.create(mesher.Padded),
+        .padded_light = try allocator.create(mesher.PaddedLight),
+        .light_queues = blk: {
+            const q = try allocator.create(light.Queues);
+            q.* = .{};
+            break :blk q;
+        },
     };
 }
 
@@ -111,6 +121,20 @@ pub fn deinit(self: *Self) void {
     self.scratch_keys.deinit(self.allocator);
     self.dirty.deinit(self.allocator);
     self.allocator.destroy(self.padded);
+    self.allocator.destroy(self.padded_light);
+    self.light_queues.deinit(self.allocator);
+    self.allocator.destroy(self.light_queues);
+}
+
+/// Switches how leaves are meshed; loaded chunks are remeshed over the next frames.
+pub fn setFastLeaves(self: *Self, fast: bool) void {
+    if (self.mesh_options.fast_leaves == fast) return;
+    self.mesh_options.fast_leaves = fast;
+    var it = self.chunks.valueIterator();
+    while (it.next()) |c| {
+        if (c.*.state == .meshed and c.*.blocks != null) c.*.state = .generated;
+    }
+    self.settled = false;
 }
 
 /// Drops every chunk; their mesh ranges are freed as of `frame`.
@@ -133,6 +157,13 @@ pub fn getBlock(self: *const Self, x: i32, y: i32, z: i32) ?BlockId {
     const c = self.chunks.get(ChunkPos.fromBlock(x, y, z)) orelse return null;
     const l = local(x, y, z);
     return c.get(l[0], l[1], l[2]);
+}
+
+/// Packed light (see light.zig) at world position (x, y, z), or null when its chunk isn't loaded.
+pub fn getLight(self: *const Self, x: i32, y: i32, z: i32) ?u8 {
+    const c = self.chunks.get(ChunkPos.fromBlock(x, y, z)) orelse return null;
+    const l = local(x, y, z);
+    return c.getLight(chunk.index(l[0], l[1], l[2]));
 }
 
 /// Whether the block blocks movement. Falls back to the generated terrain where no
@@ -158,6 +189,7 @@ pub fn setBlock(self: *Self, x: i32, y: i32, z: i32, block: BlockId) !void {
     if (c.get(l[0], l[1], l[2]) == block) return;
     try c.set(self.allocator, l[0], l[1], l[2], block);
     c.modified = true;
+    try light.blockChanged(self, c, chunk.index(l[0], l[1], l[2]), block);
 
     // per axis: this chunk, plus the neighbor on the side the block touches
     var ranges: [3][2]i32 = undefined;
@@ -233,12 +265,13 @@ pub fn update(self: *Self, arena: *MeshArena, camera_pos: @Vector(3, f64), confi
 
     if (self.settled) return;
 
-    // generate one ring beyond the view distance so edge chunks have neighbors to mesh against
+    // generate one ring beyond the view distance so edge chunks have neighbors to mesh
+    // against; top down, so sky light can fall in from the chunk above
     var generated: u32 = 0;
     gen: for (self.offsets.items) |off| {
         if (@max(@abs(off[0]), @abs(off[1])) > r + 1) continue;
-        var y = config.min_y - 1;
-        while (y <= config.max_y + 1) : (y += 1) {
+        var y = config.max_y + 1;
+        while (y >= config.min_y - 1) : (y -= 1) {
             const pos: ChunkPos = .{ .x = center.x + off[0], .y = y, .z = center.z + off[1] };
             if (self.chunks.contains(pos)) continue;
             if (generated >= config.gen_budget) break :gen;
@@ -448,6 +481,8 @@ fn generateChunk(self: *Self, pos: ChunkPos) !void {
     }
     c.updateSolidSides();
     try self.chunks.put(self.allocator, pos, c);
+    errdefer _ = self.chunks.remove(pos);
+    try light.initChunk(self, c, map);
 }
 
 fn freeMeshes(arena: *MeshArena, c: *Chunk, frame: u64) !void {
@@ -459,6 +494,7 @@ fn freeMeshes(arena: *MeshArena, c: *Chunk, frame: u64) !void {
 
 fn destroyChunk(self: *Self, c: *Chunk) void {
     if (c.blocks) |blocks| self.allocator.destroy(blocks);
+    if (c.light) |l| self.allocator.destroy(l);
     self.allocator.destroy(c);
 }
 
@@ -495,7 +531,7 @@ fn meshChunk(self: *Self, arena: *MeshArena, c: *Chunk, frame: u64) !void {
         self.stats.mesh_skipped += 1;
     } else {
         self.fillPadded(c.pos);
-        try mesher.meshChunk(self.allocator, self.padded, &self.meshes);
+        try mesher.meshChunk(self.allocator, self.padded, self.padded_light, self.mesh_options, &self.meshes);
     }
 
     try freeMeshes(arena, c, frame);
@@ -515,7 +551,8 @@ fn upload(self: *Self, arena: *MeshArena, vertices: []const mesher.Vertex) !?chu
     return range;
 }
 
-/// Copies the chunk and a one-block border of its 26 neighbors into `self.padded`.
+/// Copies the blocks and light of the chunk and a one-block border of its 26 neighbors
+/// into `self.padded` and `self.padded_light`.
 fn fillPadded(self: *Self, pos: ChunkPos) void {
     var neighbors: [3][3][3]?*const Chunk = undefined;
     for (0..3) |y| {
@@ -542,8 +579,143 @@ fn fillPadded(self: *Self, pos: ChunkPos) void {
         for (axis, 0..) |az, pz| {
             for (axis, 0..) |ax, px| {
                 const n = neighbors[ay.n][az.n][ax.n];
-                self.padded[mesher.paddedIndex(px, py, pz)] = if (n) |c| c.get(ax.local, ay.local, az.local) else .air;
+                const pi = mesher.paddedIndex(px, py, pz);
+                const i = chunk.index(ax.local, ay.local, az.local);
+                self.padded[pi] = if (n) |c| c.getIndex(i) else .air;
+                self.padded_light[pi] = if (n) |c| c.getLight(i) else 0xf0;
             }
         }
     }
+}
+
+const testing = std.testing;
+
+/// A world with chunks x, z in [-1, 1] and y in [-1, 3] generated, top down as `update` does.
+fn testWorld() !Self {
+    return testWorldAround(0, 0);
+}
+
+/// As `testWorld`, around chunk column (x, z).
+fn testWorldAround(x: i32, z: i32) !Self {
+    var world = try Self.init(testing.allocator, testing.io, 7);
+    errdefer world.deinit();
+    var cx: i32 = x - 1;
+    while (cx <= x + 1) : (cx += 1) {
+        var cz: i32 = z - 1;
+        while (cz <= z + 1) : (cz += 1) {
+            var cy: i32 = 3;
+            while (cy >= -1) : (cy -= 1) try world.generateChunk(.{ .x = cx, .y = cy, .z = cz });
+        }
+    }
+    return world;
+}
+
+fn sky(world: *const Self, x: i32, y: i32, z: i32) u4 {
+    return light.level(world.getLight(x, y, z).?, .sky);
+}
+
+fn blockLight(world: *const Self, x: i32, y: i32, z: i32) u4 {
+    return light.level(world.getLight(x, y, z).?, .block);
+}
+
+/// A column inside chunk (0, 0) with open sky at least 12 blocks above dry ground,
+/// below the generated height range.
+fn openColumn(world: *const Self) [3]i32 {
+    var x: i32 = 6;
+    while (x < 26) : (x += 1) {
+        var z: i32 = 6;
+        next: while (z < 26) : (z += 1) {
+            const h = world.terrain.height(x, z);
+            if (h <= Terrain.sea_level or h + 14 >= 4 * chunk.size) continue;
+            var y = h + 1;
+            while (y <= h + 14) : (y += 1) {
+                if (world.getBlock(x, y, z) != .air) continue :next;
+            }
+            return .{ x, h, z };
+        }
+    }
+    unreachable;
+}
+
+test "sky light is full in the open and dark underground" {
+    var world = try testWorld();
+    defer world.deinit();
+    const col = openColumn(&world);
+    const x, const h, const z = col;
+    try testing.expectEqual(@as(u4, 15), sky(&world, x, h + 1, z));
+    try testing.expectEqual(@as(u4, 15), sky(&world, x, h + 10, z));
+    try testing.expectEqual(@as(u4, 0), sky(&world, x, h - 3, z));
+}
+
+test "a roof casts a shadow and breaking it lets the sun back in" {
+    var world = try testWorld();
+    defer world.deinit();
+    const x, const h, const z = openColumn(&world);
+    try world.setBlock(x, h + 4, z, .stone);
+    // lit from the side now, one level less
+    try testing.expectEqual(@as(u4, 14), sky(&world, x, h + 3, z));
+    try testing.expectEqual(@as(u4, 0), sky(&world, x, h + 4, z));
+    try world.setBlock(x, h + 4, z, .air);
+    try testing.expectEqual(@as(u4, 15), sky(&world, x, h + 3, z));
+    try testing.expectEqual(@as(u4, 15), sky(&world, x, h + 4, z));
+}
+
+test "a lamp lights its surroundings until it is removed" {
+    var world = try testWorld();
+    defer world.deinit();
+    const x, const h, const z = openColumn(&world);
+    try world.setBlock(x, h + 6, z, .lamp);
+    try testing.expectEqual(@as(u4, 15), blockLight(&world, x, h + 6, z));
+    try testing.expectEqual(@as(u4, 14), blockLight(&world, x, h + 7, z));
+    try testing.expectEqual(@as(u4, 12), blockLight(&world, x, h + 9, z));
+    try testing.expectEqual(@as(u4, 13), blockLight(&world, x + 1, h + 7, z));
+    try world.setBlock(x, h + 6, z, .air);
+    try testing.expectEqual(@as(u4, 0), blockLight(&world, x, h + 6, z));
+    try testing.expectEqual(@as(u4, 0), blockLight(&world, x, h + 9, z));
+    // the sky came back too
+    try testing.expectEqual(@as(u4, 15), sky(&world, x, h + 6, z));
+}
+
+test "light is the same whichever chunk loads first" {
+    // generating bottom up leaves no chunk above to fall back on, so this relies on
+    // the heightmap estimate and the exchange between neighbors
+    var a = try testWorld();
+    defer a.deinit();
+    var b = try Self.init(testing.allocator, testing.io, 7);
+    defer b.deinit();
+    var cy: i32 = -1;
+    while (cy <= 3) : (cy += 1) {
+        var cx: i32 = 1;
+        while (cx >= -1) : (cx -= 1) {
+            var cz: i32 = -1;
+            while (cz <= 1) : (cz += 1) try b.generateChunk(.{ .x = cx, .y = cy, .z = cz });
+        }
+    }
+    // the middle chunks, away from the unloaded outside
+    var differing: usize = 0;
+    var y: i32 = 0;
+    while (y < 3 * chunk.size) : (y += 1) {
+        var z: i32 = 0;
+        while (z < chunk.size) : (z += 1) {
+            var x: i32 = 0;
+            while (x < chunk.size) : (x += 1) {
+                if (a.getLight(x, y, z).? != b.getLight(x, y, z).?) differing += 1;
+            }
+        }
+    }
+    // only under tree canopies that cross a chunk boundary, which the estimate can't see
+    try testing.expect(differing < 64);
+}
+
+test "sky light fades with depth under water" {
+    // the first column along +x deep under the sea
+    const terrain: Terrain = .{ .seed = 7 };
+    var x: i32 = 0;
+    while (terrain.height(x, 0) >= Terrain.sea_level - 3) : (x += 1) {
+        if (x > 100_000) return error.SkipZigTest;
+    }
+    var world = try testWorldAround(@divFloor(x, chunk.size), 0);
+    defer world.deinit();
+    try testing.expectEqual(@as(u4, 14), sky(&world, x, Terrain.sea_level, 0));
+    try testing.expectEqual(@as(u4, 12), sky(&world, x, Terrain.sea_level - 2, 0));
 }

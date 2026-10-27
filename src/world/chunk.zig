@@ -7,6 +7,8 @@ pub const size = 32;
 pub const volume = size * size * size;
 
 pub const Blocks = [volume]BlockId;
+/// Per block: sky light in the high nibble, block light in the low one (see light.zig).
+pub const Light = [volume]u8;
 
 /// Chunk coordinates; the chunk covers world blocks [pos * size, pos * size + size).
 pub const ChunkPos = struct {
@@ -61,10 +63,40 @@ pub const Chunk = struct {
     solid_sides: u6 = 0,
     /// edited since generation; kept loaded so the edits aren't lost
     modified: bool = false,
+    /// null when every block has `uniform_light`
+    light: ?*Light = null,
+    uniform_light: u8 = 0,
+    /// some block has had block light (light.zig skips the exchange with chunks that haven't)
+    has_block_light: bool = false,
+    /// light changed during the current light update, and the sides (mesher face
+    /// order) where it changed on the border; see light.zig
+    relit: bool = false,
+    relit_sides: u6 = 0,
 
     pub fn get(self: *const Chunk, x: usize, y: usize, z: usize) BlockId {
+        return self.getIndex(index(x, y, z));
+    }
+
+    pub fn getIndex(self: *const Chunk, i: usize) BlockId {
         const blocks = self.blocks orelse return self.uniform;
-        return blocks[index(x, y, z)];
+        return blocks[i];
+    }
+
+    pub fn getLight(self: *const Chunk, i: usize) u8 {
+        const light = self.light orelse return self.uniform_light;
+        return light[i];
+    }
+
+    /// Writes one light value, promoting uniform light to per-block storage when needed.
+    pub fn setLight(self: *Chunk, allocator: std.mem.Allocator, i: usize, value: u8) !void {
+        const light = self.light orelse blk: {
+            if (value == self.uniform_light) return;
+            const light = try allocator.create(Light);
+            @memset(light, self.uniform_light);
+            self.light = light;
+            break :blk light;
+        };
+        light[i] = value;
     }
 
     /// Writes one block, promoting a uniform chunk to per-block storage when needed.

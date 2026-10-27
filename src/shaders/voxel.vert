@@ -1,7 +1,7 @@
 #version 450
 
 // packed vertex, see src/world/mesher.zig
-//   data:  x:6 y:6 z:6 face:3 ao:2
+//   data:  x:6 y:6 z:6 face:3 ao:2 sky:4 block:4 solid:1
 //   color: RGB8 sRGB in the low 24 bits, texture layer in the top 8 (255 = flat color)
 layout(location = 0) in uint in_data;
 layout(location = 1) in uint in_color;
@@ -14,6 +14,7 @@ layout(set = 0, binding = 0) uniform Scene {
     vec4 ground_color;
     vec4 fog_color;
     vec4 params; // x: fog start, y: fog end, z: ao strength, w: 1 = fog towards the skybox
+    vec4 light;  // rgb: block light color, w: sky brightness (daylight)
 } scene;
 
 layout(push_constant) uniform Push {
@@ -26,6 +27,8 @@ layout(location = 2) out vec3 v_color;
 layout(location = 3) out float v_ao;
 layout(location = 4) out vec2 v_uv;
 layout(location = 5) flat out uint v_layer;
+layout(location = 6) out vec2 v_light; // sky and block light, 0..1
+layout(location = 7) flat out uint v_solid;
 
 const vec3 normals[6] = vec3[](
     vec3(1, 0, 0), vec3(-1, 0, 0),
@@ -64,4 +67,6 @@ void main() {
     // block coordinates on the face; the sampler repeats, so each block shows one whole tile
     v_uv = vec2(dot(local, face_u[face]), dot(local, face_v[face]));
     v_layer = in_color >> 24;
+    v_light = vec2((in_data >> 23) & 15u, (in_data >> 27) & 15u) / 15.0;
+    v_solid = in_data >> 31;
 }
