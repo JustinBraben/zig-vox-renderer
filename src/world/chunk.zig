@@ -65,7 +65,7 @@ pub const Chunk = struct {
     /// bit per side (+X, -X, +Y, -Y, +Z, -Z, as in the mesher), set when that
     /// whole boundary layer is opaque; see `updateSolidSides`
     solid_sides: u6 = 0,
-    /// edited since generation; kept loaded so the edits aren't lost
+    /// edited since it was last written to the save (world.zig)
     modified: bool = false,
     /// null when every block has `uniform_light`
     light: ?*Light = null,

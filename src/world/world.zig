@@ -11,6 +11,7 @@ const BlockId = @import("block.zig").BlockId;
 const mesher = @import("mesher.zig");
 const light = @import("light.zig");
 const Pool = @import("workers.zig");
+const Save = @import("save.zig");
 const Terrain = @import("terrain.zig");
 const math = @import("../math.zig");
 const MeshArena = @import("../gfx/mesh_arena.zig");
@@ -70,6 +71,10 @@ pub const Stats = struct {
 allocator: Allocator,
 io: std.Io,
 terrain: Terrain,
+/// edited chunks, saved when they unload and on `saveAll`
+save: Save,
+/// where `openSave` keeps the worlds; null until then (saved in memory only)
+saves_dir: ?std.Io.Dir = null,
 chunks: std.AutoHashMapUnmanaged(ChunkPos, *Chunk) = .empty,
 /// heightmaps of loaded chunk columns, keyed by column (x, z)
 heightmaps: std.AutoHashMapUnmanaged([2]i32, *Terrain.Heightmap) = .empty,
@@ -128,6 +133,8 @@ const GenJob = struct {
     top: i32,
     bottom: i32,
     map: *Terrain.Heightmap,
+    /// saved blocks to use instead of the terrain's, top to bottom like `chunks`
+    saved: std.ArrayList(?*chunk.Blocks) = .empty,
     /// top to bottom; owned by the job until added to the world
     chunks: std.ArrayList(*Chunk) = .empty,
     err: ?anyerror = null,
@@ -147,7 +154,9 @@ const GenJob = struct {
         self.terrain.heightmap(self.column[0], self.column[1], self.map);
         var y = self.top;
         while (y >= self.bottom) : (y -= 1) {
-            const c = try buildChunk(ctx.allocator, self.terrain, .{ .x = self.column[0], .y = y, .z = self.column[1] }, self.map);
+            const saved = &self.saved.items[@intCast(self.top - y)];
+            defer saved.* = null;
+            const c = try buildChunk(ctx.allocator, self.terrain, .{ .x = self.column[0], .y = y, .z = self.column[1] }, self.map, saved.*);
             self.chunks.append(ctx.allocator, c) catch |err| {
                 freeChunk(ctx.allocator, c);
                 return err;
@@ -159,6 +168,8 @@ const GenJob = struct {
     fn freeChunks(self: *GenJob, allocator: Allocator) void {
         for (self.chunks.items) |c| freeChunk(allocator, c);
         self.chunks.clearRetainingCapacity();
+        for (self.saved.items) |blocks| if (blocks) |b| allocator.destroy(b);
+        self.saved.clearRetainingCapacity();
     }
 };
 
@@ -203,6 +214,7 @@ pub fn init(allocator: Allocator, io: std.Io, seed: u64) !Self {
         .allocator = allocator,
         .io = io,
         .terrain = .{ .seed = seed },
+        .save = .memory(io, allocator),
         .light_queues = light_queues,
         .pool = pool,
         .main_context = try .create(allocator, io),
@@ -210,6 +222,36 @@ pub fn init(allocator: Allocator, io: std.Io, seed: u64) !Self {
 }
 
 pub const defaultWorkerCount = Pool.defaultWorkerCount;
+
+/// Saves the world in `saves` from now on, in the folder of its seed, and loads what
+/// was saved there. Expects no chunks to be loaded yet.
+pub fn openSave(self: *Self, saves: std.Io.Dir) !void {
+    const save: Save = try .open(self.io, self.allocator, saves, self.terrain.seed);
+    self.save.deinit();
+    self.save = save;
+    self.saves_dir = saves;
+}
+
+/// Writes every edited chunk to the save.
+pub fn saveAll(self: *Self) !void {
+    var it = self.chunks.valueIterator();
+    while (it.next()) |entry| {
+        const c = entry.*;
+        if (!c.modified) continue;
+        try self.save.store(c.pos, c.blocks, c.uniform);
+        c.modified = false;
+    }
+    try self.save.flush();
+}
+
+/// The player as saved with the world, if it was.
+pub fn savedPlayer(self: *Self) ?Save.Player {
+    return self.save.readPlayer();
+}
+
+pub fn savePlayer(self: *Self, player: Save.Player) !void {
+    try self.save.writePlayer(player);
+}
 
 pub fn startWorkers(self: *Self, count: usize) void {
     self.pool.start(count);
@@ -224,6 +266,7 @@ pub fn deinit(self: *Self) void {
     for (self.gen_jobs.items) |job| {
         job.freeChunks(self.allocator);
         job.chunks.deinit(self.allocator);
+        job.saved.deinit(self.allocator);
         self.allocator.destroy(job.map);
         self.allocator.destroy(job);
     }
@@ -251,6 +294,7 @@ pub fn deinit(self: *Self) void {
     self.dirty.deinit(self.allocator);
     self.light_queues.deinit(self.allocator);
     self.allocator.destroy(self.light_queues);
+    self.save.deinit();
 }
 
 /// Switches how leaves are meshed; loaded chunks are remeshed over the next frames.
@@ -264,8 +308,15 @@ pub fn setFastLeaves(self: *Self, fast: bool) void {
     self.settled = false;
 }
 
-/// Drops every chunk; their mesh ranges are freed as of `frame`.
+/// Saves the edits, then drops every chunk to generate the world of `seed` (and load
+/// its edits); their mesh ranges are freed as of `frame`.
 pub fn regenerate(self: *Self, arena: *MeshArena, seed: u64, frame: u64) !void {
+    try self.saveAll();
+    if (seed != self.terrain.seed) {
+        const save: Save = if (self.saves_dir) |saves| try .open(self.io, self.allocator, saves, seed) else .memory(self.io, self.allocator);
+        self.save.deinit();
+        self.save = save;
+    }
     // columns in flight finish for nothing; mesh jobs find their chunk gone
     self.epoch +%= 1;
     for (self.ready_columns.items) |job| self.releaseGenJob(job);
@@ -506,6 +557,12 @@ fn submitColumn(self: *Self, column: [2]i32, config: Config) !void {
     job.top = config.max_y + 1;
     job.bottom = config.min_y - 1;
     job.err = null;
+    errdefer job.freeChunks(self.allocator);
+    var y = job.top;
+    while (y >= job.bottom) : (y -= 1) {
+        try job.saved.append(self.allocator, null);
+        job.saved.items[job.saved.items.len - 1] = try self.save.load(self.allocator, .{ .x = column[0], .y = y, .z = column[1] });
+    }
     try self.columns_in_flight.put(self.allocator, column, {});
     errdefer _ = self.columns_in_flight.remove(column);
     try self.pool.submit(&job.job);
@@ -750,10 +807,8 @@ fn unloadFar(self: *Self, arena: *MeshArena, center: ChunkPos, r: i32, config: C
         const c = self.chunks.get(pos).?;
         try freeMeshes(arena, c, frame);
         if (c.modified) {
-            // keep the edited blocks (they can't be regenerated); remesh when back in range
-            c.state = .generated;
-            c.mesh_job = 0;
-            continue;
+            try self.save.store(pos, c.blocks, c.uniform);
+            c.modified = false;
         }
         _ = self.chunks.remove(pos);
         self.destroyChunk(c);
@@ -791,19 +846,33 @@ fn heightmap(self: *Self, x: i32, z: i32) !*const Terrain.Heightmap {
 /// columns; see `GenJob`).
 fn generateChunk(self: *Self, pos: ChunkPos) !void {
     const map = try self.heightmap(pos.x, pos.z);
-    const c = try buildChunk(self.allocator, self.terrain, pos, map);
+    const c = try buildChunk(self.allocator, self.terrain, pos, map, try self.save.load(self.allocator, pos));
     errdefer self.destroyChunk(c);
     try self.chunks.put(self.allocator, pos, c);
     errdefer _ = self.chunks.remove(pos);
     try light.initChunk(self, c, map);
 }
 
-/// The blocks of a new chunk, not lit yet.
-fn buildChunk(allocator: Allocator, terrain: Terrain, pos: ChunkPos, map: *const Terrain.Heightmap) !*Chunk {
-    const c = try allocator.create(Chunk);
+/// The blocks of a new chunk, not lit yet: `saved` (which it takes over) or else the
+/// terrain's.
+fn buildChunk(allocator: Allocator, terrain: Terrain, pos: ChunkPos, map: *const Terrain.Heightmap, saved: ?*chunk.Blocks) !*Chunk {
+    const c = allocator.create(Chunk) catch |err| {
+        if (saved) |blocks| allocator.destroy(blocks);
+        return err;
+    };
     c.* = .{ .pos = pos };
     errdefer freeChunk(allocator, c);
 
+    if (saved) |blocks| {
+        if (std.mem.allEqual(BlockId, blocks, blocks[0])) {
+            c.uniform = blocks[0];
+            allocator.destroy(blocks);
+        } else {
+            c.blocks = blocks;
+        }
+        c.updateSolidSides();
+        return c;
+    }
     switch (Terrain.classify(pos.y, map)) {
         .uniform => |block| {
             c.uniform = block;
@@ -1056,27 +1125,32 @@ test "sky light fades with depth under water" {
     try testing.expectEqual(@as(u4, 12), sky(&world, x, Terrain.sea_level - 2, 0));
 }
 
-test "columns generated on the workers are lit like chunks generated one by one" {
-    var a = try testWorld();
-    defer a.deinit();
-    var b = try Self.init(testing.allocator, testing.io, 7);
-    defer b.deinit();
-    b.startWorkers(2);
+/// Generates the chunks of `testWorld` as `update` does: in columns, on 2 workers.
+fn generateOnWorkers(world: *Self) !void {
+    world.startWorkers(2);
     // the y range of `testWorld`
     const config: Config = .{ .render_distance = 1, .min_y = 0, .max_y = 2, .gen_budget = 1000, .mesh_budget = 0 };
     var cx: i32 = -1;
     while (cx <= 1) : (cx += 1) {
         var cz: i32 = -1;
-        while (cz <= 1) : (cz += 1) try b.submitColumn(.{ cx, cz }, config);
+        while (cz <= 1) : (cz += 1) try world.submitColumn(.{ cx, cz }, config);
     }
-    b.pool.help(&b.main_context, true);
-    try b.pool.poll(&b.finished_jobs);
-    for (b.finished_jobs.items) |job| try b.takeColumn(@fieldParentPtr("job", job));
-    try testing.expectEqual(9, b.ready_columns.items.len);
+    world.pool.help(&world.main_context, true);
+    try world.pool.poll(&world.finished_jobs);
+    for (world.finished_jobs.items) |job| try world.takeColumn(@fieldParentPtr("job", job));
+    try testing.expectEqual(9, world.ready_columns.items.len);
     // in whatever order they finished
-    while (b.ready_columns.items.len > 0) {
-        _ = try b.addColumn(b.ready_columns.orderedRemove(0), .{ .x = 0, .y = 0, .z = 0 }, 1, config);
+    while (world.ready_columns.items.len > 0) {
+        _ = try world.addColumn(world.ready_columns.orderedRemove(0), .{ .x = 0, .y = 0, .z = 0 }, 1, config);
     }
+}
+
+test "columns generated on the workers are lit like chunks generated one by one" {
+    var a = try testWorld();
+    defer a.deinit();
+    var b = try Self.init(testing.allocator, testing.io, 7);
+    defer b.deinit();
+    try generateOnWorkers(&b);
     try testing.expectEqual(a.chunks.count(), b.chunks.count());
     var it = a.chunks.iterator();
     while (it.next()) |entry| {
@@ -1087,4 +1161,28 @@ test "columns generated on the workers are lit like chunks generated one by one"
             try testing.expectEqual(ca.getLight(i), cb.getLight(i));
         }
     }
+}
+
+test "edits are saved and come back, lit, when the world is loaded again" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var x: i32 = undefined;
+    var h: i32 = undefined;
+    var z: i32 = undefined;
+    {
+        var world = try testWorld();
+        defer world.deinit();
+        try world.openSave(tmp.dir);
+        x, h, z = openColumn(&world);
+        try world.setBlock(x, h + 4, z, .planks);
+        try world.saveAll();
+    }
+    var world = try Self.init(testing.allocator, testing.io, 7);
+    defer world.deinit();
+    try world.openSave(tmp.dir);
+    try generateOnWorkers(&world);
+    try testing.expectEqual(BlockId.planks, world.getBlock(x, h + 4, z).?);
+    try testing.expect(!world.chunks.get(ChunkPos.fromBlock(x, h + 4, z)).?.modified);
+    // the shadow under it, as when it was placed
+    try testing.expectEqual(@as(u4, 14), sky(&world, x, h + 3, z));
 }

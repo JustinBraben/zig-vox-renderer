@@ -11,4 +11,5 @@ test {
     _ = @import("world/light.zig");
     _ = @import("world/world.zig");
     _ = @import("world/workers.zig");
+    _ = @import("world/save.zig");
 }

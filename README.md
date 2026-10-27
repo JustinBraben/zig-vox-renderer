@@ -24,9 +24,13 @@ Click the world to capture the mouse, Esc releases it for the debug UI.
 - Left mouse: break block, right mouse: place block, mouse wheel / 1-9: pick block
 - F: toggle flying
 
+## Saves
+
+Edits and the player's position are saved in a `saves/` folder next to the executable (`zig-out/bin/saves`), one `world-<seed>` folder per seed: every 30 seconds, when chunks unload, when switching seeds and on exit. Delete a world's folder to start it over.
+
 ## Benchmark
 
-Run `zig build run -- --bench[=render_distance]` to measure world loading and frame times.
+Run `zig build run -- --bench[=render_distance]` to measure world loading and frame times. The benchmark neither loads nor saves the world.
 
 Shaders and textures are loaded at startup from an `assets/` folder next to the executable. `zig build` installs it to `zig-out/bin/assets` (compiled shaders in `shaders/`, a copy of `assets/textures` in `textures/`), so keep that folder with the executable when moving it.
 

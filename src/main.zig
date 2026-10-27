@@ -194,6 +194,10 @@ pub fn main(init: std.process.Init) !void {
     var world = try World.init(gpa, init.io, settings.seed);
     defer world.deinit();
     world.startWorkers(World.defaultWorkerCount());
+    // the benchmark always starts from fresh terrain, and doesn't save
+    const saves_dir: ?std.Io.Dir = if (bench == null) openSavesDir(init.io, gpa) else null;
+    defer if (saves_dir) |dir| dir.close(init.io);
+    if (saves_dir) |dir| world.openSave(dir) catch |err| log.err("opening the saved world failed: {t}; edits won't be saved", .{err});
     var lod = Lod.init(gpa, init.io);
     defer lod.deinit();
 
@@ -202,6 +206,10 @@ pub fn main(init: std.process.Init) !void {
     var player = Player.init(.{ 0.5, if (bench != null) ground + 40 else ground, 0.5 });
     if (bench != null) player.setFlying(true);
     var camera: Camera = .{ .position = player.eye(1) };
+    restorePlayer(&world, &player, &camera, &settings);
+    // saved again on the way out, and every `autosave_interval_ns`
+    defer saveGame(&world, &player, &camera, &settings);
+    var last_save_ns = backend.nanoTime();
     var physics_time: f64 = 0;
     // index into `BlockId.placeable`
     var selected: usize = 0;
@@ -480,14 +488,68 @@ pub fn main(init: std.process.Init) !void {
         if (present_result != .success) needs_recreate = true;
 
         if (actions.regenerate) {
+            // the player stays with the world it was in, and returns to where it was in the new one
+            saveGame(&world, &player, &camera, &settings);
             try world.regenerate(&arena, settings.seed, frame_counter);
             try lod.clear(&arena, frame_counter);
+            restorePlayer(&world, &player, &camera, &settings);
+            last_save_ns = now_ns;
+        }
+        if (now_ns - last_save_ns > autosave_interval_ns) {
+            saveGame(&world, &player, &camera, &settings);
+            last_save_ns = now_ns;
         }
         if (actions.volume_changed) _ = c.SDL_SetAudioStreamGain(stream, settings.master_volume);
         if (bench) |*b| if (b.frame(&world.stats, &lod.stats, dt_ms, now_ns)) break :main_loop;
 
         frame_counter += 1;
     }
+}
+
+const autosave_interval_ns = 30 * std.time.ns_per_s;
+
+/// `saves/` next to the executable, created when missing; null (logged) when that fails.
+fn openSavesDir(io: std.Io, gpa: std.mem.Allocator) ?std.Io.Dir {
+    const exe_path = std.process.executableDirPathAlloc(io, gpa) catch |err| {
+        log.err("finding the executable's folder failed: {t}; the world won't be saved", .{err});
+        return null;
+    };
+    defer gpa.free(exe_path);
+    const exe_dir = std.Io.Dir.openDirAbsolute(io, exe_path, .{}) catch |err| {
+        log.err("opening {s} failed: {t}; the world won't be saved", .{ exe_path, err });
+        return null;
+    };
+    defer exe_dir.close(io);
+    exe_dir.createDirPath(io, "saves") catch {};
+    const dir = exe_dir.openDir(io, "saves", .{}) catch |err| {
+        log.err("opening {s}/saves failed: {t}; the world won't be saved", .{ exe_path, err });
+        return null;
+    };
+    log.info("saving worlds in {s}/saves", .{exe_path});
+    return dir;
+}
+
+/// Writes the edited chunks and the player; failures are logged, not fatal.
+fn saveGame(world: *World, player: *const Player, camera: *const Camera, settings: *const Settings) void {
+    world.saveAll() catch |err| log.err("saving the world failed: {t}", .{err});
+    world.savePlayer(.{
+        .position = player.position,
+        .yaw = camera.yaw,
+        .pitch = camera.pitch,
+        .flying = player.flying,
+        .time_of_day = settings.time_of_day,
+    }) catch |err| log.err("saving the player failed: {t}", .{err});
+}
+
+/// Puts the player where the world's save left it, if it has one.
+fn restorePlayer(world: *World, player: *Player, camera: *Camera, settings: *Settings) void {
+    const saved = world.savedPlayer() orelse return;
+    player.* = .init(saved.position);
+    player.setFlying(saved.flying);
+    camera.yaw = saved.yaw;
+    camera.pitch = saved.pitch;
+    camera.position = player.eye(1);
+    settings.time_of_day = saved.time_of_day;
 }
 
 /// SDL3 only `dlopen`s leaf names ("libvulkan.1.dylib", ...) when hunting for the Vulkan
