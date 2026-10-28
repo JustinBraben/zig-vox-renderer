@@ -110,8 +110,10 @@ fn texel(tile: Tile, x: i32, y: i32) Rgba {
 }
 
 /// For each pixel, the crack stage it first shows up in (255 = never): a few wandering
-/// cracks that grow out from the middle, the later ones starting later.
+/// cracks that grow out from the middle, the later ones starting later. Stages are
+/// handed out by pixel count so each one adds about as much crack as the last.
 fn crackMap() [tile_size][tile_size]u8 {
+    // first pass: when (in steps) each pixel is reached
     var map: [tile_size][tile_size]u8 = @splat(@splat(255));
     const seed: u32 = 0x5bd1e995;
     const branches = 7;
@@ -125,15 +127,32 @@ fn crackMap() [tile_size][tile_size]u8 {
         var step: i32 = 0;
         while (step < len) : (step += 1) {
             if (px < 0 or py < 0 or px >= tile_size or py >= tile_size) break;
-            const t = @as(f32, @floatFromInt(step + bi)) / (longest + branches);
-            const stage: u8 = @intFromFloat(@min(t * Tile.crack_stages, Tile.crack_stages - 1));
             const cell = &map[@intFromFloat(py)][@intFromFloat(px)];
-            cell.* = @min(cell.*, stage);
+            cell.* = @min(cell.*, @as(u8, @intCast(step + bi)));
             dir += (hash(seed, bi, step + 2) - 0.5) * 1.1;
             px += @cos(dir);
             py += @sin(dir);
         }
     }
+
+    // second pass: stage = share of the crack already drawn before this pixel
+    var before: [longest + branches]u32 = @splat(0);
+    var total: u32 = 0;
+    for (map) |row| for (row) |t| {
+        if (t == 255) continue;
+        before[t] += 1;
+        total += 1;
+    };
+    var sum: u32 = 0;
+    for (&before) |*n| {
+        const count = n.*;
+        n.* = sum;
+        sum += count;
+    }
+    for (&map) |*row| for (row) |*t| {
+        if (t.* == 255) continue;
+        t.* = @intCast(before[t.*] * Tile.crack_stages / total);
+    };
     return map;
 }
 
