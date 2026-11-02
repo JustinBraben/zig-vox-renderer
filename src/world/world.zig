@@ -610,13 +610,25 @@ fn submitMesh(self: *Self, arena: *MeshArena, c: *Chunk, frame: u64, urgent: boo
 /// Takes in the jobs the workers finished: uploads meshes, and queues generated
 /// columns in `ready_columns`.
 fn collect(self: *Self, arena: *MeshArena, frame: u64) !void {
-    self.finished_jobs.clearRetainingCapacity();
+    // appended to the meshes the last frame had no room to upload
     try self.pool.poll(&self.finished_jobs);
-    for (self.finished_jobs.items) |job| {
+    const finished = self.finished_jobs.items;
+    var waiting: usize = 0;
+    for (finished, 0..) |job, i| {
+        errdefer {
+            // keep the jobs not taken in yet
+            std.mem.copyForwards(*Pool.Job, finished[waiting..], finished[i + 1 ..]);
+            self.finished_jobs.shrinkRetainingCapacity(waiting + finished.len - i - 1);
+        }
         if (job.run == &GenJob.run) {
             try self.takeColumn(@fieldParentPtr("job", job));
         } else {
             const mesh: *MeshJob = @fieldParentPtr("job", job);
+            if (!arena.canStage(mesh.out.solid.items.len + mesh.out.translucent.items.len)) {
+                finished[waiting] = job;
+                waiting += 1;
+                continue;
+            }
             self.mesh_in_flight -= 1;
             // the list has room for every job
             defer self.free_mesh_jobs.appendAssumeCapacity(mesh);
@@ -634,6 +646,7 @@ fn collect(self: *Self, arena: *MeshArena, frame: u64) !void {
             c.translucent_mesh = try self.upload(arena, mesh.out.translucent.items);
         }
     }
+    self.finished_jobs.shrinkRetainingCapacity(waiting);
     self.stats.gen_jobs = self.gen_in_flight + @as(u32, @intCast(self.ready_columns.items.len));
     self.stats.mesh_jobs = self.mesh_in_flight;
 }
@@ -873,7 +886,8 @@ fn buildChunk(allocator: Allocator, terrain: Terrain, pos: ChunkPos, map: *const
         c.updateSolidSides();
         return c;
     }
-    switch (Terrain.classify(pos.y, map)) {
+    var caves: Terrain.Caves = undefined;
+    switch (terrain.classify(pos.y, map, &caves)) {
         .uniform => |block| {
             c.uniform = block;
             // nothing to mesh in an all-air chunk
@@ -881,8 +895,15 @@ fn buildChunk(allocator: Allocator, terrain: Terrain, pos: ChunkPos, map: *const
         },
         .mixed => {
             const blocks = try allocator.create(chunk.Blocks);
-            terrain.fill(pos.y, map, blocks);
-            c.blocks = blocks;
+            terrain.fill(pos.y, map, &caves, blocks);
+            // caves that only came close keep solid rock compact
+            if (std.mem.allEqual(BlockId, blocks, blocks[0])) {
+                c.uniform = blocks[0];
+                allocator.destroy(blocks);
+                if (c.uniform == .air) c.state = .meshed;
+            } else {
+                c.blocks = blocks;
+            }
         },
     }
     c.updateSolidSides();

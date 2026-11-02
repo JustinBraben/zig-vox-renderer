@@ -29,9 +29,13 @@ Click the world to capture the mouse, Esc releases it for the debug UI.
 
 New worlds start in **survival**: blocks take time to break and drop an item to pick up, placing uses blocks from the hotbar, falls of more than 3 blocks hurt, and health comes back slowly. Dying returns you to the spawn point with your hotbar. **Creative** breaks blocks at once, never runs out of them, and lets you fly; the Player section of the debug UI can put any block in the selected slot. Worlds saved before game modes existed load in creative. Dropped items aren't saved.
 
+## Caves
+
+Winding tunnels and larger caverns run under the terrain from y = 4 up to just below the surface, more caverns the deeper you go. In scattered patches of dry land they break through the surface as cave entrances; they never open into the sea. Caves are dark: bring lamps.
+
 ## Saves
 
-Edits and the player's position are saved in a `saves/` folder next to the executable (`zig-out/bin/saves`), one `world-<seed>` folder per seed: every 30 seconds, when chunks unload, when switching seeds and on exit. Delete a world's folder to start it over.
+Edits and the player's position are saved in a `saves/` folder next to the executable (`zig-out/bin/saves`), one `world-<seed>` folder per seed: every 30 seconds, when chunks unload, when switching seeds and on exit. Delete a world's folder to start it over. Chunks you edited before caves existed keep their saved blocks, so a cave can end abruptly at the edge of one.
 
 ## Benchmark
 

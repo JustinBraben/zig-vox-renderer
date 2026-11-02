@@ -170,8 +170,11 @@ pub fn update(self: *Self, arena: *MeshArena, world: *const World, camera_pos: @
     }
 
     std.mem.sort(Key, self.queue.items, &s, Selection.buildsBefore);
-    const built = @min(self.queue.items.len, config.build_budget);
-    for (self.queue.items[0..built]) |key| try self.build(arena, &world.terrain, key);
+    var built: usize = 0;
+    for (self.queue.items[0..@min(self.queue.items.len, config.build_budget)]) |key| {
+        if (!try self.build(arena, &world.terrain, key)) break;
+        built += 1;
+    }
 
     // free tiles the selection no longer reaches
     self.scratch_keys.clearRetainingCapacity();
@@ -228,12 +231,14 @@ fn childrenReady(self: *Self, s: *const Selection, key: Key) !bool {
     return ready;
 }
 
-fn build(self: *Self, arena: *MeshArena, terrain: *const Terrain, key: Key) !void {
+/// Returns false, building nothing, when this frame has no room left to upload the tile.
+fn build(self: *Self, arena: *MeshArena, terrain: *const Terrain, key: Key) !bool {
     var cells: Grid = undefined;
     var blocks: Surface = undefined;
     sample(terrain, key, &cells, &blocks);
     self.vertices.clearRetainingCapacity();
     const extent = try meshTile(self.allocator, &cells, &blocks, width(key), &self.vertices);
+    if (!arena.canStage(self.vertices.items.len)) return false;
 
     var tile: Tile = .{ .mesh = null, .extent = extent, .used = self.pass };
     if (self.vertices.items.len > 0) {
@@ -241,6 +246,7 @@ fn build(self: *Self, arena: *MeshArena, terrain: *const Terrain, key: Key) !voi
         if (tile.mesh == null) self.stats.arena_full = true;
     }
     try self.tiles.put(self.allocator, key, tile);
+    return true;
 }
 
 /// Records draws for every leaf in view. Expects `pipeline.bind` to have been called.

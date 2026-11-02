@@ -32,8 +32,8 @@ const vk = VulkanContext.vk;
 const log = std.log.scoped(.app);
 
 const frames_in_flight = 2;
-/// 16M vertices = 128 MiB of chunk meshes
-const mesh_arena_vertices = 16 * 1024 * 1024;
+/// 32M vertices = 256 MiB of chunk meshes in device memory
+const mesh_arena_vertices = 32 * 1024 * 1024;
 /// player physics rate
 const physics_dt = 1.0 / 60.0;
 /// how far away blocks can be broken or placed
@@ -421,6 +421,7 @@ pub fn main(init: std.process.Init) !void {
         const cmd = frame.cmd;
         try device.resetCommandBuffer(cmd, .{});
         try device.beginCommandBuffer(cmd, &.{ .flags = .{ .one_time_submit_bit = true } });
+        arena.recordUploads(cmd);
 
         transitionImage(device, cmd, swapchain.images[image_index], .undefined, .color_attachment_optimal);
         depth.transition(cmd);
@@ -553,7 +554,7 @@ pub fn main(init: std.process.Init) !void {
             last_save_ns = now_ns;
         }
         if (actions.volume_changed) _ = c.SDL_SetAudioStreamGain(stream, settings.master_volume);
-        if (bench) |*b| if (b.frame(&world.stats, &lod.stats, dt_ms, now_ns)) break :main_loop;
+        if (bench) |*b| if (b.frame(&world.stats, &lod.stats, arena.used, dt_ms, now_ns)) break :main_loop;
 
         frame_counter += 1;
     }
@@ -622,9 +623,10 @@ fn restorePlayer(world: *World, player: *Player, camera: *Camera, settings: *Set
     if (game.mode == .creative) player.setFlying(saved.flying);
 }
 
-/// On the terrain at the origin.
+/// On the terrain near the origin, away from cave entrances.
 fn spawnPoint(world: *const World) @Vector(3, f64) {
-    return .{ 0.5, @floatFromInt(world.terrain.height(0, 0) + 1), 0.5 };
+    const x, const h, const z = world.terrain.spawnColumn(0, 0);
+    return .{ @as(f64, @floatFromInt(x)) + 0.5, @floatFromInt(h + 1), @as(f64, @floatFromInt(z)) + 0.5 };
 }
 
 /// Brightness of dropped items from the light where they are, like the chunk shader's.
@@ -699,7 +701,7 @@ const Bench = struct {
     draw_ms: f64 = 0,
 
     /// Returns true once the benchmark is done.
-    fn frame(self: *Bench, stats: *const World.Stats, lod: *const Lod.Stats, dt_ms: f32, now_ns: i128) bool {
+    fn frame(self: *Bench, stats: *const World.Stats, lod: *const Lod.Stats, arena_used: u32, dt_ms: f32, now_ns: i128) bool {
         const start = self.load_start_ns orelse {
             self.load_start_ns = now_ns;
             return false;
@@ -717,8 +719,8 @@ const Bench = struct {
         if (self.frames < steady_frames) return false;
 
         const n: f64 = steady_frames;
-        std.debug.print("bench: loaded {d} chunks ({d} meshed, {d} drawn, {d:.2} M vertices) in {d:.0} ms\n", .{
-            stats.loaded, stats.meshed, stats.drawn, @as(f64, @floatFromInt(stats.drawn_vertices)) / 1e6, self.load_ms,
+        std.debug.print("bench: loaded {d} chunks ({d} meshed, {d} drawn, {d:.2} M vertices, {d:.0} MiB of meshes) in {d:.0} ms\n", .{
+            stats.loaded, stats.meshed, stats.drawn, @as(f64, @floatFromInt(stats.drawn_vertices)) / 1e6, @as(f64, @floatFromInt(arena_used)) * @sizeOf(MeshArena.Vertex) / (1 << 20), self.load_ms,
         });
         std.debug.print("bench: distant terrain {d} tiles ({d} leaves, {d} drawn, {d:.2} M vertices)\n", .{
             lod.tiles, lod.leaves, lod.drawn, @as(f64, @floatFromInt(lod.drawn_vertices)) / 1e6,
