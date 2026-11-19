@@ -5,6 +5,7 @@ test {
     _ = @import("player.zig");
     _ = @import("world/chunk.zig");
     _ = @import("world/terrain.zig");
+    _ = @import("world/worms.zig");
     _ = @import("world/mesher.zig");
     _ = @import("world/raycast.zig");
     _ = @import("world/lod.zig");

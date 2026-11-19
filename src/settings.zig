@@ -40,7 +40,7 @@ pub const Settings = struct {
 
     // world
     render_distance: i32 = 8,
-    min_chunk_y: i32 = 0,
+    min_chunk_y: i32 = -2,
     max_chunk_y: i32 = 3,
     seed: u64 = 1337,
     gen_budget: i32 = 16,

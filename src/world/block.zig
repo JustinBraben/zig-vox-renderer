@@ -18,6 +18,8 @@ pub const BlockId = enum(u8) {
     water,
     glass,
     lamp,
+    deepstone,
+    bedrock,
     _,
 
     /// Every named block except air, in declaration order (the player's block palette).
@@ -85,6 +87,9 @@ pub const BlockId = enum(u8) {
             .log, .planks => 2.0,
             .stone => 2.25,
             .cobblestone => 2.5,
+            .deepstone => 3.25,
+            // never breaks in survival
+            .bedrock => std.math.inf(f32),
             else => 1,
         };
     }
@@ -92,7 +97,7 @@ pub const BlockId = enum(u8) {
     /// What breaking the block in survival gives, if anything.
     pub fn drop(self: BlockId) ?BlockId {
         return switch (self) {
-            .air, .water, .leaves, .glass => null,
+            .air, .water, .leaves, .glass, .bedrock => null,
             .grass => .dirt,
             .stone => .cobblestone,
             else => self,
@@ -131,6 +136,8 @@ pub const BlockId = enum(u8) {
             .water => all(.water),
             .glass => all(.glass),
             .lamp => all(.lamp),
+            .deepstone => all(.deepstone),
+            .bedrock => all(.bedrock),
             _ => null,
         };
     }
@@ -154,6 +161,8 @@ pub const BlockId = enum(u8) {
             .water => rgb(0x3a, 0x6e, 0xc8),
             .glass => rgb(0xc8, 0xe0, 0xf0),
             .lamp => rgb(0xf4, 0xc8, 0x6a),
+            .deepstone => rgb(0x56, 0x57, 0x60),
+            .bedrock => rgb(0x50, 0x50, 0x50),
             _ => rgb(0xff, 0x00, 0xff),
         };
     }
@@ -179,6 +188,8 @@ pub const Tile = enum(u8) {
     water,
     glass,
     lamp,
+    deepstone,
+    bedrock,
     /// overlay on a block being broken, from just started to almost done
     crack_0,
     crack_1,

@@ -13,6 +13,7 @@ const light = @import("light.zig");
 const Pool = @import("workers.zig");
 const Save = @import("save.zig");
 const Terrain = @import("terrain.zig");
+const Worms = @import("worms.zig");
 const math = @import("../math.zig");
 const MeshArena = @import("../gfx/mesh_arena.zig");
 const VoxelPipeline = @import("../gfx/voxel_pipeline.zig");
@@ -71,6 +72,8 @@ pub const Stats = struct {
 allocator: Allocator,
 io: std.Io,
 terrain: Terrain,
+/// the tunnels of the columns around the loaded ones, shared by the generators
+worm_cache: *Worms.Cache,
 /// edited chunks, saved when they unload and on `saveAll`
 save: Save,
 /// where `openSave` keeps the worlds; null until then (saved in memory only)
@@ -210,10 +213,14 @@ pub fn init(allocator: Allocator, io: std.Io, seed: u64) !Self {
     const pool = try allocator.create(Pool);
     pool.* = .{ .io = io, .allocator = allocator };
     errdefer allocator.destroy(pool);
+    const worm_cache = try allocator.create(Worms.Cache);
+    worm_cache.* = .init(allocator, io, seed);
+    errdefer allocator.destroy(worm_cache);
     return .{
         .allocator = allocator,
         .io = io,
-        .terrain = .{ .seed = seed },
+        .terrain = .{ .seed = seed, .worms = worm_cache },
+        .worm_cache = worm_cache,
         .save = .memory(io, allocator),
         .light_queues = light_queues,
         .pool = pool,
@@ -295,6 +302,8 @@ pub fn deinit(self: *Self) void {
     self.light_queues.deinit(self.allocator);
     self.allocator.destroy(self.light_queues);
     self.save.deinit();
+    self.worm_cache.deinit();
+    self.allocator.destroy(self.worm_cache);
 }
 
 /// Switches how leaves are meshed; loaded chunks are remeshed over the next frames.
@@ -330,7 +339,8 @@ pub fn regenerate(self: *Self, arena: *MeshArena, seed: u64, frame: u64) !void {
     self.chunks.clearRetainingCapacity();
     self.dirty.clearRetainingCapacity();
     self.clearHeightmaps();
-    self.terrain = .{ .seed = seed };
+    self.worm_cache.clear(seed);
+    self.terrain = .{ .seed = seed, .worms = self.worm_cache };
     self.stats = .{ .workers = self.stats.workers };
     self.settled = false;
 }
@@ -837,6 +847,8 @@ fn unloadFar(self: *Self, arena: *MeshArena, center: ChunkPos, r: i32, config: C
     for (self.scratch_columns.items) |column| {
         self.allocator.destroy(self.heightmaps.fetchRemove(column).?.value);
     }
+    // tunnels reach the loaded columns from this far out
+    self.worm_cache.retain(.{ center.x, center.z }, r + 2 + Worms.reach / chunk.size + 2);
 }
 
 fn clearHeightmaps(self: *Self) void {

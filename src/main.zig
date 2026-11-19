@@ -32,8 +32,9 @@ const vk = VulkanContext.vk;
 const log = std.log.scoped(.app);
 
 const frames_in_flight = 2;
-/// 32M vertices = 256 MiB of chunk meshes in device memory
-const mesh_arena_vertices = 32 * 1024 * 1024;
+/// 64M vertices = 512 MiB of chunk meshes in device memory; caves down to the bedrock
+/// take about 300 MiB at render distance 8
+const mesh_arena_vertices = 64 * 1024 * 1024;
 /// player physics rate
 const physics_dt = 1.0 / 60.0;
 /// how far away blocks can be broken or placed

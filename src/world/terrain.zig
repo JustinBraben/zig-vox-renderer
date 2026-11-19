@@ -1,19 +1,31 @@
-//! Deterministic heightmap terrain from seeded value-noise fBm, with caves carved
-//! out of it by 3D gradient noise.
+//! Deterministic heightmap terrain from seeded value-noise fBm, down to a bedrock
+//! floor at `world_bottom`, with caves carved out of it: winding tunnels
+//! (worms.zig) and caverns from 3D gradient noise.
 //!
 //! Every block is a pure function of (seed, world position), so chunks can be
 //! generated in any order and their borders always line up.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const chunk = @import("chunk.zig");
 const BlockId = @import("block.zig").BlockId;
+const Worms = @import("worms.zig");
+const Sphere = Worms.Sphere;
 
 const Self = @This();
 
 seed: u64,
+/// shared cache of tunnel systems, or null to walk them every time
+worms: ?*Worms.Cache = null,
 
 pub const sea_level = 24;
 pub const snow_line = 92;
+/// y of the lowest block, always bedrock; nothing is below it.
+pub const world_bottom = -64;
+/// Bedrock fades out over this many blocks above `world_bottom`.
+const bedrock_layers = 5;
+/// Stone turns into deepstone below this, mixing over the blocks just under it.
+const deepstone_line = 7;
 
 /// Surface height (y of the top solid block) of the column at (x, z). Columns below
 /// `sea_level` are flooded up to it.
@@ -43,7 +55,21 @@ pub const Heightmap = struct {
     /// highest y caves may carve in each column (`ceilingOf`)
     ceilings: [chunk.size][chunk.size]i32,
     ceiling_max: i32,
+    /// tunnel spheres overlapping the column
+    spheres: [max_spheres]Sphere,
+    sphere_count: usize,
+
+    /// The tunnel spheres collected for the column.
+    pub fn tunnels(self: *const Heightmap) []const Sphere {
+        return self.spheres[0..@min(self.sphere_count, max_spheres)];
+    }
 };
+
+/// Tunnels are collected this far around a column, so the trees rooted near it can
+/// check whether their ground is carved.
+const sphere_pad = tree_reach + tree_cell;
+const max_spheres = 3072;
+const max_padded_spheres = 6144;
 
 pub fn heightmap(self: Self, column_x: i32, column_z: i32, map: *Heightmap) void {
     map.x = column_x * chunk.size;
@@ -67,7 +93,21 @@ pub fn heightmap(self: Self, column_x: i32, column_z: i32, map: *Heightmap) void
             map.ceiling_max = @max(map.ceiling_max, c);
         }
     }
-    map.tree_count = self.treesNear(map.x, map.z, map.x + chunk.size - 1, map.z + chunk.size - 1, &map.trees);
+    var padded_spheres: [max_padded_spheres]Sphere = undefined;
+    const count = Worms.collect(self, map.x - sphere_pad, map.z - sphere_pad, map.x + chunk.size - 1 + sphere_pad, map.z + chunk.size - 1 + sphere_pad, &padded_spheres);
+    if (builtin.is_test) std.debug.assert(count <= max_padded_spheres);
+    const near = padded_spheres[0..@min(count, max_padded_spheres)];
+    map.tree_count = self.treesNear(map.x, map.z, map.x + chunk.size - 1, map.z + chunk.size - 1, near, &map.trees);
+    // only the ones overlapping the column are kept
+    const lo = [3]i32{ map.x, std.math.minInt(i32) / 2, map.z };
+    const hi = [3]i32{ map.x + chunk.size - 1, std.math.maxInt(i32) / 2, map.z + chunk.size - 1 };
+    map.sphere_count = 0;
+    for (near) |s| {
+        if (!s.overlaps(lo, hi)) continue;
+        if (map.sphere_count < max_spheres) map.spheres[map.sphere_count] = s;
+        map.sphere_count += 1;
+    }
+    if (builtin.is_test) std.debug.assert(map.sphere_count <= max_spheres);
     map.top = map.max;
     for (map.trees[0..map.tree_count]) |t| map.top = @max(map.top, t.top());
 }
@@ -83,12 +123,33 @@ pub const Content = union(enum) {
 /// it. Samples the chunk's cave lattice into `caves` for `fill`.
 pub fn classify(self: Self, chunk_y: i32, map: *const Heightmap, caves: *Caves) Content {
     const y0 = chunk_y * chunk.size;
+    const y1 = y0 + chunk.size - 1;
     caves.any = false;
+    caves.tunnels = false;
     if (y0 > @max(map.top, sea_level)) return .{ .uniform = .air };
-    if (y0 + chunk.size > cave_floor and y0 <= map.ceiling_max) self.sampleCaves(map, y0, caves);
-    // blocks at least `stone_depth` below the surface are stone, unless a cave runs through
-    if (y0 + chunk.size - 1 <= map.min - stone_depth and !caves.any) return .{ .uniform = .stone };
+    if (y1 < world_bottom) return .{ .uniform = .bedrock };
+    if (y1 >= cave_floor and y0 <= map.ceiling_max) {
+        self.sampleCaves(map, y0, caves);
+        caves.tunnels = tunnelsCross(map, y0);
+    }
+    // blocks at least `stone_depth` below the surface are stone (deepstone further
+    // down), unless a cave runs through
+    if (y1 <= map.min - stone_depth and !caves.any and !caves.tunnels) {
+        if (y0 >= deepstone_line) return .{ .uniform = .stone };
+        if (y1 < 0 and y0 >= world_bottom + bedrock_layers) return .{ .uniform = .deepstone };
+    }
     return .mixed;
+}
+
+/// Whether a tunnel sphere of `map` may carve a block of the chunk at height `y0`.
+fn tunnelsCross(map: *const Heightmap, y0: i32) bool {
+    const lo = [3]i32{ map.x, @max(y0, cave_floor), map.z };
+    const hi = [3]i32{ map.x + chunk.size - 1, @min(y0 + chunk.size - 1, map.ceiling_max), map.z + chunk.size - 1 };
+    if (lo[1] > hi[1]) return false;
+    for (map.tunnels()) |s| {
+        if (s.overlaps(lo, hi)) return true;
+    }
+    return false;
 }
 
 /// Fills `blocks` for the chunk at height `chunk_y` of `map`'s column, whose caves
@@ -99,11 +160,12 @@ pub fn fill(self: Self, chunk_y: i32, map: *const Heightmap, caves: *const Caves
         const wy = y0 + @as(i32, @intCast(y));
         for (0..chunk.size) |z| {
             for (0..chunk.size) |x| {
-                blocks[chunk.index(x, y, z)] = blockAt(wy, map.heights[z][x]);
+                blocks[chunk.index(x, y, z)] = self.ground(map.x + @as(i32, @intCast(x)), wy, map.z + @as(i32, @intCast(z)), map.heights[z][x]);
             }
         }
     }
     if (caves.any) carve(y0, map, caves, blocks);
+    if (caves.tunnels) carveTunnels(y0, map, blocks);
 
     // trees only grow into air, so a canopy never cuts into a neighboring hillside (or the sea)
     const lo: @Vector(3, i32) = .{ map.x, y0, map.z };
@@ -126,13 +188,21 @@ pub fn fill(self: Self, chunk_y: i32, map: *const Heightmap, caves: *const Caves
     }
 }
 
+/// The generated block at (x, y, z), as `fill` makes it. Slow where caves may be: for
+/// physics at the edge of the loaded world, and tests.
 pub fn block(self: Self, x: i32, y: i32, z: i32) BlockId {
-    const ground = blockAt(y, self.height(x, z));
-    if (ground == .water) return ground;
-    if (ground != .air and !self.carved(x, y, z)) return ground;
+    return self.blockWith(x, y, z, null);
+}
+
+/// `block`, with the tunnel spheres within `sphere_pad` of (x, z) (sideways) if the
+/// caller has them, or null to collect them when needed.
+fn blockWith(self: Self, x: i32, y: i32, z: i32, spheres: ?[]const Sphere) BlockId {
+    const ground_block = self.ground(x, y, z, self.height(x, z));
+    if (ground_block == .water) return ground_block;
+    if (ground_block != .air and !self.carved(x, y, z, spheres)) return ground_block;
     // the first tree wins, as in `fill`
     var trees: [4]Tree = undefined;
-    const count = self.treesNear(x, z, x, z, &trees);
+    const count = self.treesNear(x, z, x, z, spheres, &trees);
     for (trees[0..count]) |t| {
         if (self.treeBlock(t, x, y, z)) |b| return b;
     }
@@ -143,7 +213,7 @@ pub fn block(self: Self, x: i32, y: i32, z: i32) BlockId {
 /// cave: its x, surface height and z.
 pub fn spawnColumn(self: Self, x: i32, z: i32) [3]i32 {
     var sx = x;
-    while (self.carved(sx, self.height(sx, z), z)) sx += 1;
+    while (self.carved(sx, self.height(sx, z), z, null)) sx += 1;
     return .{ sx, self.height(sx, z), z };
 }
 
@@ -153,6 +223,22 @@ pub fn surfaceBlock(surface: i32) BlockId {
 }
 
 const stone_depth = 10;
+
+/// The block at (x, y, z) of a column with surface height `surface`, before caves
+/// and trees: `blockAt`, with deepstone and bedrock deep down.
+fn ground(self: Self, x: i32, y: i32, z: i32, surface: i32) BlockId {
+    const b = blockAt(y, surface);
+    if (b != .stone or y >= deepstone_line) return b;
+    if (y < world_bottom + bedrock_layers) {
+        // always at the bottom, thinning out above it
+        const above: u64 = @intCast(@max(y - world_bottom, 0));
+        if (self.hash3(x, y, z, 20) % bedrock_layers < bedrock_layers - above) return .bedrock;
+    }
+    if (y < 0) return .deepstone;
+    // mixed in with stone, more of it lower down
+    const below: u64 = @intCast(deepstone_line - y);
+    return if (self.hash3(x, y, z, 21) % (deepstone_line + 1) < below) .deepstone else .stone;
+}
 
 fn blockAt(y: i32, surface: i32) BlockId {
     if (y > surface) return if (y <= sea_level) .water else .air;
@@ -207,7 +293,7 @@ pub fn forestCover(self: Self, x: i32, z: i32) f32 {
 }
 
 /// The tree of grid cell (cx, cz), if it has one.
-fn treeInCell(self: Self, cx: i32, cz: i32) ?Tree {
+fn treeInCell(self: Self, cx: i32, cz: i32, spheres: ?[]const Sphere) ?Tree {
     const h = self.hash(cx, cz, 3);
     const x = cx * tree_cell + @as(i32, @intCast(h % tree_cell));
     const z = cz * tree_cell + @as(i32, @intCast((h >> 8) % tree_cell));
@@ -216,7 +302,7 @@ fn treeInCell(self: Self, cx: i32, cz: i32) ?Tree {
     const surface = self.height(x, z);
     if (surfaceBlock(surface) != .grass) return null;
     // not over a cave entrance
-    if (self.carved(x, surface, z)) return null;
+    if (self.carved(x, surface, z, spheres)) return null;
     // a ragged band where the two kinds mix
     const spruce = surface + @as(i32, @intCast((h >> 32) % 12)) > spruce_line;
     const extra: i32 = @intCast((h >> 40) % 4);
@@ -230,14 +316,15 @@ fn treeInCell(self: Self, cx: i32, cz: i32) ?Tree {
 }
 
 /// Collects every tree that may have a block in the rect [x0, x1] × [z0, z1],
-/// in a fixed order (cells by z, then x). Returns the count.
-fn treesNear(self: Self, x0: i32, z0: i32, x1: i32, z1: i32, out: []Tree) usize {
+/// in a fixed order (cells by z, then x). Returns the count. `spheres`, if given, holds the
+/// tunnels within `sphere_pad` of the rect.
+fn treesNear(self: Self, x0: i32, z0: i32, x1: i32, z1: i32, spheres: ?[]const Sphere, out: []Tree) usize {
     var count: usize = 0;
     var cz = @divFloor(z0 - tree_reach, tree_cell);
     while (cz <= @divFloor(z1 + tree_reach, tree_cell)) : (cz += 1) {
         var cx = @divFloor(x0 - tree_reach, tree_cell);
         while (cx <= @divFloor(x1 + tree_reach, tree_cell)) : (cx += 1) {
-            const t = self.treeInCell(cx, cz) orelse continue;
+            const t = self.treeInCell(cx, cz, spheres) orelse continue;
             if (t.x + tree_reach < x0 or t.x - tree_reach > x1 or t.z + tree_reach < z0 or t.z - tree_reach > z1) continue;
             out[count] = t;
             count += 1;
@@ -276,8 +363,8 @@ fn treeBlock(self: Self, t: Tree, x: i32, y: i32, z: i32) ?BlockId {
     }
 }
 
-/// Caves are carved from `cave_floor` up to a column's ceiling.
-pub const cave_floor = 4;
+/// Caves are carved from `cave_floor` (just above the bedrock) up to a column's ceiling.
+pub const cave_floor = world_bottom + bedrock_layers;
 /// Solid ground left above caves under beaches and the sea.
 const cave_roof = 4;
 /// Solid ground left above caves on dry land away from entrances.
@@ -311,6 +398,13 @@ fn entrance(self: Self, x: i32, z: i32) bool {
     return self.fbm(@as(f32, @floatFromInt(x)) / 96, @as(f32, @floatFromInt(z)) / 96, 1, 14) > entrance_threshold;
 }
 
+/// The surface height at (x, z) if a tunnel may break through the surface there.
+pub fn entranceHeight(self: Self, x: i32, z: i32) ?i32 {
+    if (!self.entrance(x, z)) return null;
+    const h = self.height(x, z);
+    return if (h > sea_level + 1) h else null;
+}
+
 /// The highest y caves may carve in the column at (x, z), as in `Heightmap.ceilings`.
 fn ceiling(self: Self, x: i32, z: i32) i32 {
     return ceilingOf(self.height(x, z), .{ self.height(x - 1, z), self.height(x + 1, z), self.height(x, z - 1), self.height(x, z + 1) }, self.entrance(x, z));
@@ -322,6 +416,8 @@ pub const Caves = struct {
     density: [cells_y + 1][cells + 1][cells + 1]f32,
     /// whether any lattice point that can carve is below 0; if not, nothing is carved
     any: bool,
+    /// whether a tunnel of the heightmap may carve the chunk
+    tunnels: bool,
 };
 
 /// Samples the cave lattice of the chunk at height `y0` in `map`'s column. Points no
@@ -337,7 +433,6 @@ fn sampleCaves(self: Self, map: *const Heightmap, y0: i32, caves: *Caves) void {
             }
             const x = map.x + @as(i32, @intCast(lx * cell));
             const z = map.z + @as(i32, @intCast(lz * cell));
-            const width = self.tunnelWidth(x, z);
             for (0..cells_y + 1) |ly| {
                 const y = y0 + @as(i32, @intCast(ly * cell_y));
                 const d = &caves.density[ly][lz][lx];
@@ -346,7 +441,7 @@ fn sampleCaves(self: Self, map: *const Heightmap, y0: i32, caves: *Caves) void {
                     d.* = 1;
                     continue;
                 }
-                d.* = self.densityWith(x, y, z, width);
+                d.* = self.caveDensity(x, y, z);
                 if (d.* < 0) caves.any = true;
             }
         }
@@ -381,8 +476,37 @@ fn carve(y0: i32, map: *const Heightmap, caves: *const Caves, blocks: *chunk.Blo
     }
 }
 
-/// Whether a cave carves out the block at (x, y, z), as `carve` does.
-fn carved(self: Self, x: i32, y: i32, z: i32) bool {
+/// Carves the tunnels of `map` out of the blocks of the chunk at height `y0` in its column.
+fn carveTunnels(y0: i32, map: *const Heightmap, blocks: *chunk.Blocks) void {
+    const lo = [3]i32{ map.x, @max(y0, cave_floor), map.z };
+    const hi = [3]i32{ map.x + chunk.size - 1, @min(y0 + chunk.size - 1, map.ceiling_max), map.z + chunk.size - 1 };
+    for (map.tunnels()) |s| {
+        if (!s.overlaps(lo, hi)) continue;
+        const s_lo = @max(@as(@Vector(3, i32), lo), @Vector(3, i32){ floorInt(s.x - s.r), floorInt(s.y - s.ry), floorInt(s.z - s.r) });
+        const s_hi = @min(@as(@Vector(3, i32), hi), @Vector(3, i32){ floorInt(s.x + s.r), floorInt(s.y + s.ry), floorInt(s.z + s.r) });
+        var wy = s_lo[1];
+        while (wy <= s_hi[1]) : (wy += 1) {
+            var wz = s_lo[2];
+            while (wz <= s_hi[2]) : (wz += 1) {
+                var wx = s_lo[0];
+                while (wx <= s_hi[0]) : (wx += 1) {
+                    const x: usize = @intCast(wx - map.x);
+                    const z: usize = @intCast(wz - map.z);
+                    if (wy > map.ceilings[z][x] or !s.contains(wx, wy, wz)) continue;
+                    blocks[chunk.index(x, @intCast(wy - y0), z)] = .air;
+                }
+            }
+        }
+    }
+}
+
+fn floorInt(v: f32) i32 {
+    return @intFromFloat(@floor(v));
+}
+
+/// Whether a cave carves out the block at (x, y, z), as `carve` and `carveTunnels` do.
+/// `spheres` holds the tunnels near (x, z), or null to collect them.
+fn carved(self: Self, x: i32, y: i32, z: i32, spheres: ?[]const Sphere) bool {
     if (y < cave_floor or y > self.ceiling(x, z)) return false;
     const ox = @divFloor(x, cell) * cell;
     const oy = @divFloor(y, cell_y) * cell_y;
@@ -391,8 +515,13 @@ fn carved(self: Self, x: i32, y: i32, z: i32) bool {
     for (&corners, 0..) |*c, k| {
         c.* = self.caveDensity(ox + cell * @as(i32, @intCast(k & 1)), oy + cell_y * @as(i32, @intCast(k >> 2)), oz + cell * @as(i32, @intCast((k >> 1) & 1)));
     }
-    if (std.mem.min(f32, &corners) >= 0) return false;
-    return interpolate(corners, @intCast(x - ox), @intCast(y - oy), @intCast(z - oz)) < 0;
+    if (std.mem.min(f32, &corners) < 0 and interpolate(corners, @intCast(x - ox), @intCast(y - oy), @intCast(z - oz)) < 0) return true;
+    var buffer: [1024]Sphere = undefined;
+    const near = spheres orelse buffer[0..@min(Worms.collect(self, x, z, x, z, &buffer), buffer.len)];
+    for (near) |s| {
+        if (s.contains(x, y, z)) return true;
+    }
+    return false;
 }
 
 /// Trilinear interpolation inside a cell between its `corners` (index x + 2z + 4y), at
@@ -406,39 +535,24 @@ fn interpolate(corners: [8]f32, dx: usize, dy: usize, dz: usize) f32 {
     return std.math.lerp(bottom, top, ty);
 }
 
-/// Cave density at a lattice point: winding tunnels where two noise fields are both
-/// near zero, and caverns where a third is high, more often deeper down.
+/// Cave density at a lattice point: below 0 in caverns, where a noise field is high
+/// enough; deep down it needs to be less high.
 fn caveDensity(self: Self, x: i32, y: i32, z: i32) f32 {
-    return self.densityWith(x, y, z, self.tunnelWidth(x, z));
-}
-
-/// How far from zero the tunnel fields may be, varying slowly across the map.
-fn tunnelWidth(self: Self, x: i32, z: i32) f32 {
-    return tunnel_width * (0.6 + 0.8 * self.fbm(@as(f32, @floatFromInt(x)) / 160, @as(f32, @floatFromInt(z)) / 160, 1, 13));
-}
-
-/// `caveDensity` with the column's `tunnelWidth`.
-fn densityWith(self: Self, x: i32, y: i32, z: i32, width: f32) f32 {
     const fx: f32 = @floatFromInt(x);
     const fy: f32 = @floatFromInt(y);
     const fz: f32 = @floatFromInt(z);
-    // squashed vertically, so tunnels mostly run sideways
-    const a = self.fbm3(fx / tunnel_scale, fy / (tunnel_scale * 0.6), fz / tunnel_scale, 2, 10);
-    const b = self.fbm3(fx / tunnel_scale, fy / (tunnel_scale * 0.6), fz / tunnel_scale, 2, 11);
-    const tunnel = @max(@abs(a), @abs(b)) - width;
-    const c = self.fbm3(fx / cavern_scale, fy / (cavern_scale * 0.6), fz / cavern_scale, 2, 12);
-    const depth = std.math.clamp((cavern_depth - fy) / cavern_depth, 0, 1);
-    const cavern = cavern_threshold - cavern_deep_bonus * depth - c;
-    return @min(tunnel, cavern);
+    // squashed vertically, so caverns are wider than they are tall
+    const c = self.fbm3(fx / cavern_scale, fy / (cavern_scale * 0.5), fz / cavern_scale, 2, 12);
+    const depth = std.math.clamp((cavern_top - fy) / (cavern_top - cavern_deep), 0, 1);
+    return std.math.lerp(cavern_threshold_top, cavern_threshold_deep, depth) - c;
 }
 
-const tunnel_scale = 56;
-const tunnel_width = 0.05;
-const cavern_scale = 80;
-const cavern_threshold = 0.42;
-const cavern_deep_bonus = 0.12;
-/// caverns are most common from here down
-const cavern_depth = 48;
+const cavern_scale = 96;
+/// Caverns get more common from `cavern_top` down to `cavern_deep`.
+const cavern_top = sea_level;
+const cavern_deep = -16;
+const cavern_threshold_top = 0.5;
+const cavern_threshold_deep = 0.33;
 
 /// Fractal Brownian motion over 3D gradient noise, in about [-1, 1].
 fn fbm3(self: Self, x: f32, y: f32, z: f32, octaves: u32, salt: u64) f32 {
@@ -583,27 +697,53 @@ test "terrain is deterministic and in range" {
     try std.testing.expect(differs);
 }
 
+/// Tunnel spheres around `map`'s column, collected separately from the heightmap's
+/// (over a wider rect), for checking blocks against `blockWith` quickly.
+const TestSpheres = struct {
+    buffer: []Sphere,
+    count: usize,
+
+    fn init(terrain: Self, map: *const Heightmap) !TestSpheres {
+        const buffer = try std.testing.allocator.alloc(Sphere, 16384);
+        const pad = sphere_pad + 5;
+        const count = Worms.collect(terrain, map.x - pad, map.z - pad, map.x + chunk.size - 1 + pad, map.z + chunk.size - 1 + pad, buffer);
+        try std.testing.expect(count <= buffer.len);
+        return .{ .buffer = buffer, .count = count };
+    }
+
+    fn deinit(self: TestSpheres) void {
+        std.testing.allocator.free(self.buffer);
+    }
+
+    fn slice(self: TestSpheres) []const Sphere {
+        return self.buffer[0..self.count];
+    }
+};
+
 test "generated chunks match the per-block function across borders" {
     const terrain: Self = .{ .seed = 7 };
     const blocks = try std.testing.allocator.create(chunk.Blocks);
     defer std.testing.allocator.destroy(blocks);
 
-    const pos: chunk.ChunkPos = .{ .x = -1, .y = 0, .z = 2 };
     var map: Heightmap = undefined;
-    terrain.heightmap(pos.x, pos.z, &map);
-    var caves: Caves = undefined;
-    try std.testing.expectEqual(Content.mixed, terrain.classify(pos.y, &map, &caves));
-    terrain.fill(pos.y, &map, &caves, blocks);
-    for ([_]usize{ 0, 31 }) |x| {
-        for (0..chunk.size) |y| {
-            for ([_]usize{ 0, 31 }) |z| {
-                const expected = terrain.block(pos.x * 32 + @as(i32, @intCast(x)), @intCast(y), pos.z * 32 + @as(i32, @intCast(z)));
-                try std.testing.expectEqual(expected, blocks[chunk.index(x, y, z)]);
+    terrain.heightmap(-1, 2, &map);
+    try std.testing.expect(map.sphere_count <= max_spheres);
+    for ([_]i32{ -2, 0 }) |cy| {
+        var caves: Caves = undefined;
+        try std.testing.expectEqual(Content.mixed, terrain.classify(cy, &map, &caves));
+        terrain.fill(cy, &map, &caves, blocks);
+        for ([_]usize{ 0, 31 }) |x| {
+            for (0..chunk.size) |y| {
+                for ([_]usize{ 0, 31 }) |z| {
+                    const expected = terrain.block(map.x + @as(i32, @intCast(x)), cy * chunk.size + @as(i32, @intCast(y)), map.z + @as(i32, @intCast(z)));
+                    try std.testing.expectEqual(expected, blocks[chunk.index(x, y, z)]);
+                }
             }
         }
     }
 
     // far above the terrain is empty
+    var caves: Caves = undefined;
     try std.testing.expectEqual(Content{ .uniform = .air }, terrain.classify(10, &map, &caves));
 }
 
@@ -612,22 +752,23 @@ test "uniform chunks really are uniform" {
     const blocks = try std.testing.allocator.create(chunk.Blocks);
     defer std.testing.allocator.destroy(blocks);
 
-    var found_stone = false;
+    var found: std.EnumSet(BlockId) = .initEmpty();
     var cx: i32 = -6;
     while (cx <= 6) : (cx += 1) {
         var map: Heightmap = undefined;
         terrain.heightmap(cx, cx * 2, &map);
-        var cy: i32 = -2;
+        var cy: i32 = -3;
         while (cy <= 4) : (cy += 1) {
             var caves: Caves = undefined;
             const content = terrain.classify(cy, &map, &caves);
             if (content != .uniform) continue;
-            if (content.uniform == .stone) found_stone = true;
+            found.insert(content.uniform);
             terrain.fill(cy, &map, &caves, blocks);
             for (blocks) |b| try std.testing.expectEqual(content.uniform, b);
         }
     }
-    try std.testing.expect(found_stone);
+    try std.testing.expect(found.contains(.air));
+    try std.testing.expect(found.contains(.bedrock));
 }
 
 test "trees grow on grass and match the per-block function" {
@@ -641,6 +782,8 @@ test "trees grow on grass and match the per-block function" {
     while (cx <= 4) : (cx += 1) {
         var map: Heightmap = undefined;
         terrain.heightmap(cx, 3 - cx, &map);
+        const spheres = try TestSpheres.init(terrain, &map);
+        defer spheres.deinit();
         for (map.trees[0..map.tree_count]) |t| {
             try std.testing.expectEqual(BlockId.grass, terrain.block(t.x, t.base - 1, t.z));
             try std.testing.expect(t.top() <= map.top);
@@ -658,7 +801,7 @@ test "trees grow on grass and match the per-block function" {
                         const wx = map.x + @as(i32, @intCast(x));
                         const wy = cy * chunk.size + @as(i32, @intCast(y));
                         const wz = map.z + @as(i32, @intCast(z));
-                        try std.testing.expectEqual(terrain.block(wx, wy, wz), b);
+                        try std.testing.expectEqual(terrain.blockWith(wx, wy, wz, spheres.slice()), b);
                         if (b == .log) logs += 1;
                         if (b == .leaves) leaves += 1;
                     }
@@ -684,66 +827,188 @@ test "low ground is flooded up to sea level" {
     try std.testing.expectEqual(BlockId.air, terrain.block(x, sea_level + 1, 0));
 }
 
-test "caves run underground, open to the surface in places and never into water" {
-    const terrain: Self = .{ .seed = 1337 };
-    const blocks = try std.testing.allocator.create(chunk.Blocks);
-    defer std.testing.allocator.destroy(blocks);
-    var underground: usize = 0;
-    var hollow: usize = 0;
-    var entrances: usize = 0;
-    var cx: i32 = -4;
-    while (cx < 4) : (cx += 1) {
-        var cz: i32 = -4;
-        while (cz < 4) : (cz += 1) {
-            var map: Heightmap = undefined;
-            terrain.heightmap(cx, cz, &map);
-            var cy: i32 = 0;
-            while (cy <= 3) : (cy += 1) {
-                var caves: Caves = undefined;
-                if (terrain.classify(cy, &map, &caves) != .mixed) continue;
-                terrain.fill(cy, &map, &caves, blocks);
-                for (0..chunk.size) |y| {
-                    const wy = cy * chunk.size + @as(i32, @intCast(y));
-                    for (0..chunk.size) |z| {
-                        for (0..chunk.size) |x| {
-                            const b = blocks[chunk.index(x, y, z)];
-                            const surface = map.heights[z][x];
-                            if (wy <= surface) {
-                                underground += 1;
-                                if (b == .air) hollow += 1;
-                                if (b == .air and wy == surface) entrances += 1;
-                            }
-                            if (b != .air) continue;
-                            // no air next to water inside the chunk
-                            if (x > 0) try std.testing.expect(blocks[chunk.index(x - 1, y, z)] != .water);
-                            if (x < chunk.size - 1) try std.testing.expect(blocks[chunk.index(x + 1, y, z)] != .water);
-                            if (z > 0) try std.testing.expect(blocks[chunk.index(x, y, z - 1)] != .water);
-                            if (z < chunk.size - 1) try std.testing.expect(blocks[chunk.index(x, y, z + 1)] != .water);
-                            if (y < chunk.size - 1) try std.testing.expect(blocks[chunk.index(x, y + 1, z)] != .water);
+/// The blocks of a box of `columns`² chunk columns, chunk layers `cy0`..`cy1`, with the
+/// surface heights; [y][z][x] from the box's minimum corner.
+const TestRegion = struct {
+    columns: usize,
+    cy0: i32,
+    layers: usize,
+    blocks: []BlockId,
+    surface: []i32,
+
+    fn init(terrain: Self, columns: usize, cy0: i32, cy1: i32) !TestRegion {
+        const layers: usize = @intCast(cy1 - cy0 + 1);
+        const side = columns * chunk.size;
+        const self: TestRegion = .{
+            .columns = columns,
+            .cy0 = cy0,
+            .layers = layers,
+            .blocks = try std.testing.allocator.alloc(BlockId, side * side * layers * chunk.size),
+            .surface = try std.testing.allocator.alloc(i32, side * side),
+        };
+        const blocks = try std.testing.allocator.create(chunk.Blocks);
+        defer std.testing.allocator.destroy(blocks);
+        const map = try std.testing.allocator.create(Heightmap);
+        defer std.testing.allocator.destroy(map);
+        for (0..columns) |cz| {
+            for (0..columns) |cx| {
+                terrain.heightmap(@intCast(cx), @intCast(cz), map);
+                for (0..chunk.size) |z| {
+                    for (0..chunk.size) |x| self.surface[(cz * chunk.size + z) * side + cx * chunk.size + x] = map.heights[z][x];
+                }
+                for (0..layers) |l| {
+                    var caves: Caves = undefined;
+                    const cy = cy0 + @as(i32, @intCast(l));
+                    switch (terrain.classify(cy, map, &caves)) {
+                        .uniform => |b| @memset(blocks, b),
+                        .mixed => terrain.fill(cy, map, &caves, blocks),
+                    }
+                    for (0..chunk.size) |y| {
+                        for (0..chunk.size) |z| {
+                            for (0..chunk.size) |x| self.blocks[self.index(cx * chunk.size + x, l * chunk.size + y, cz * chunk.size + z)] = blocks[chunk.index(x, y, z)];
                         }
                     }
                 }
             }
         }
+        return self;
+    }
+
+    fn deinit(self: TestRegion) void {
+        std.testing.allocator.free(self.blocks);
+        std.testing.allocator.free(self.surface);
+    }
+
+    fn width(self: TestRegion) usize {
+        return self.columns * chunk.size;
+    }
+
+    fn tall(self: TestRegion) usize {
+        return self.layers * chunk.size;
+    }
+
+    fn index(self: TestRegion, x: usize, y: usize, z: usize) usize {
+        return (y * self.width() + z) * self.width() + x;
+    }
+
+    fn worldY(self: TestRegion, y: usize) i32 {
+        return self.cy0 * chunk.size + @as(i32, @intCast(y));
+    }
+
+    /// Whether the block is a carved out underground one.
+    fn hollow(self: TestRegion, x: usize, y: usize, z: usize) bool {
+        return self.blocks[self.index(x, y, z)] == .air and self.worldY(y) <= self.surface[z * self.width() + x];
+    }
+};
+
+test "caves run deep, open to the surface in places and never into water" {
+    const terrain: Self = .{ .seed = 1337 };
+    const region = try TestRegion.init(terrain, 6, -3, 3);
+    defer region.deinit();
+    var underground: usize = 0;
+    var hollow: usize = 0;
+    var deep: usize = 0;
+    var entrances: usize = 0;
+    const side = region.width();
+    for (0..region.tall()) |y| {
+        const wy = region.worldY(y);
+        for (0..side) |z| {
+            for (0..side) |x| {
+                const b = region.blocks[region.index(x, y, z)];
+                if (wy <= world_bottom) try std.testing.expectEqual(BlockId.bedrock, b);
+                if (wy < 0) try std.testing.expect(b != .stone);
+                if (wy >= deepstone_line) try std.testing.expect(b != .deepstone);
+                const surface = region.surface[z * side + x];
+                if (wy >= world_bottom and wy <= surface) underground += 1;
+                if (!region.hollow(x, y, z)) continue;
+                try std.testing.expect(wy >= cave_floor);
+                hollow += 1;
+                if (wy < -32) deep += 1;
+                if (wy == surface) entrances += 1;
+                // no air next to water
+                if (x > 0) try std.testing.expect(region.blocks[region.index(x - 1, y, z)] != .water);
+                if (x < side - 1) try std.testing.expect(region.blocks[region.index(x + 1, y, z)] != .water);
+                if (z > 0) try std.testing.expect(region.blocks[region.index(x, y, z - 1)] != .water);
+                if (z < side - 1) try std.testing.expect(region.blocks[region.index(x, y, z + 1)] != .water);
+                if (y + 1 < region.tall()) try std.testing.expect(region.blocks[region.index(x, y + 1, z)] != .water);
+            }
+        }
     }
     // a few percent of the ground is hollow
-    try std.testing.expect(hollow * 100 > underground and hollow * 100 < underground * 10);
+    try std.testing.expect(hollow * 100 > underground * 2 and hollow * 100 < underground * 12);
+    try std.testing.expect(deep * 10 > hollow);
     try std.testing.expect(entrances > 0);
+}
+
+test "caves join up into networks" {
+    const terrain: Self = .{ .seed = 1337 };
+    const region = try TestRegion.init(terrain, 6, -2, 3);
+    defer region.deinit();
+    const side = region.width();
+    const total = side * side * region.tall();
+    var seen = try std.DynamicBitSetUnmanaged.initEmpty(std.testing.allocator, total);
+    defer seen.deinit(std.testing.allocator);
+    var stack: std.ArrayList(u32) = .empty;
+    defer stack.deinit(std.testing.allocator);
+
+    var hollow: usize = 0;
+    var largest: usize = 0;
+    var largest_span: i32 = 0;
+    for (0..total) |start| {
+        const x0 = start % side;
+        const z0 = start / side % side;
+        const y0 = start / (side * side);
+        if (seen.isSet(start) or !region.hollow(x0, y0, z0)) continue;
+        var size: usize = 0;
+        var lo: usize = y0;
+        var hi: usize = y0;
+        seen.set(start);
+        try stack.append(std.testing.allocator, @intCast(start));
+        while (stack.pop()) |i| {
+            size += 1;
+            const x = i % side;
+            const z = i / side % side;
+            const y = i / (side * side);
+            lo = @min(lo, y);
+            hi = @max(hi, y);
+            const neighbors = [6][3]isize{ .{ -1, 0, 0 }, .{ 1, 0, 0 }, .{ 0, -1, 0 }, .{ 0, 1, 0 }, .{ 0, 0, -1 }, .{ 0, 0, 1 } };
+            for (neighbors) |d| {
+                const nx = @as(isize, @intCast(x)) + d[0];
+                const ny = @as(isize, @intCast(y)) + d[1];
+                const nz = @as(isize, @intCast(z)) + d[2];
+                if (nx < 0 or nz < 0 or ny < 0 or nx >= side or nz >= side or ny >= region.tall()) continue;
+                const n = region.index(@intCast(nx), @intCast(ny), @intCast(nz));
+                if (seen.isSet(n) or !region.hollow(@intCast(nx), @intCast(ny), @intCast(nz))) continue;
+                seen.set(n);
+                try stack.append(std.testing.allocator, @intCast(n));
+            }
+        }
+        hollow += size;
+        if (size > largest) {
+            largest = size;
+            largest_span = @intCast(hi - lo + 1);
+        }
+    }
+    try std.testing.expect(largest * 2 >= hollow);
+    try std.testing.expect(largest_span >= 40);
 }
 
 test "carved chunks match the per-block function" {
     const terrain: Self = .{ .seed = 1337 };
     const blocks = try std.testing.allocator.create(chunk.Blocks);
     defer std.testing.allocator.destroy(blocks);
-    // the first chunk along +x of the lowest layer that a cave runs through
+    // the first deep chunk along +x that both kinds of cave run through
     var cx: i32 = 0;
     var map: Heightmap = undefined;
     var caves: Caves = undefined;
     while (true) : (cx += 1) {
+        try std.testing.expect(cx < 64);
         terrain.heightmap(cx, 0, &map);
-        if (terrain.classify(0, &map, &caves) == .mixed and caves.any) break;
+        if (terrain.classify(-1, &map, &caves) == .mixed and caves.any and caves.tunnels) break;
     }
-    terrain.fill(0, &map, &caves, blocks);
+    terrain.fill(-1, &map, &caves, blocks);
+    const spheres = try TestSpheres.init(terrain, &map);
+    defer spheres.deinit();
     var hollow: usize = 0;
     // every other layer and row, to keep the test quick
     var y: usize = 0;
@@ -752,20 +1017,27 @@ test "carved chunks match the per-block function" {
         while (z < chunk.size) : (z += 2) {
             for (0..chunk.size) |x| {
                 const b = blocks[chunk.index(x, y, z)];
-                try std.testing.expectEqual(terrain.block(map.x + @as(i32, @intCast(x)), @intCast(y), map.z + @as(i32, @intCast(z))), b);
-                if (b == .air and @as(i32, @intCast(y)) < map.heights[z][x]) hollow += 1;
+                const wx = map.x + @as(i32, @intCast(x));
+                const wy = @as(i32, @intCast(y)) - chunk.size;
+                const wz = map.z + @as(i32, @intCast(z));
+                try std.testing.expectEqual(terrain.blockWith(wx, wy, wz, spheres.slice()), b);
+                // and a few with the tunnels collected for the block alone
+                if (x % 8 == 0 and y % 8 == 0) try std.testing.expectEqual(terrain.block(wx, wy, wz), b);
+                if (b == .air) hollow += 1;
             }
         }
     }
     try std.testing.expect(hollow > 0);
 }
 
-test "chunks below the caves stay uniform stone" {
+test "the bottom of the world is bedrock" {
     const terrain: Self = .{ .seed = 1337 };
     var map: Heightmap = undefined;
     terrain.heightmap(0, 0, &map);
     var caves: Caves = undefined;
-    try std.testing.expectEqual(Content{ .uniform = .stone }, terrain.classify(-1, &map, &caves));
+    try std.testing.expectEqual(Content{ .uniform = .bedrock }, terrain.classify(-3, &map, &caves));
+    var x: i32 = -20;
+    while (x < 20) : (x += 1) try std.testing.expectEqual(BlockId.bedrock, terrain.block(x, world_bottom, 3 * x));
 }
 
 test "spawn is on solid ground" {

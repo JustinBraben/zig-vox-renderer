@@ -92,6 +92,20 @@ fn texel(tile: Tile, x: i32, y: i32) Rgba {
             const glow = 1 - @max(@abs(dx), @abs(dy)) / 8;
             break :blk shade(BlockId.lamp.color(), 0.85 + 0.25 * glow + 0.08 * fbm(seed, x, y, 4));
         },
+        .deepstone => blk: {
+            // darker than stone, with faint horizontal layers
+            const n = fbm(seed, x, y, 4);
+            const level = @floor(n * 4) / 4;
+            const layer = valueNoise(seed +% 5, x, y, 1, 4);
+            const fleck = hash(seed +% 3, x, y) > 0.95;
+            break :blk shade(BlockId.deepstone.color(), 0.8 + 0.25 * level + 0.15 * layer + @as(f32, if (fleck) 0.2 else 0));
+        },
+        .bedrock => blk: {
+            // coarse light and dark blotches
+            const n = valueNoise(seed, x, y, 4, 4) * 0.7 + 0.3 * hash(seed, x, y);
+            const f: f32 = if (n > 0.62) 1.5 else if (n > 0.4) 1.0 else 0.55;
+            break :blk shade(BlockId.bedrock.color(), f);
+        },
         .glass => blk: {
             const edge = x == 0 or y == 0 or x == tile_size - 1 or y == tile_size - 1;
             if (edge) break :blk shade(rgb(0xd8, 0xe4, 0xec), 0.9 + 0.1 * hash(seed, x, y));

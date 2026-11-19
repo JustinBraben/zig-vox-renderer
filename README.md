@@ -31,11 +31,11 @@ New worlds start in **survival**: blocks take time to break and drop an item to 
 
 ## Caves
 
-Winding tunnels and larger caverns run under the terrain from y = 4 up to just below the surface, more caverns the deeper you go. In scattered patches of dry land they break through the surface as cave entrances; they never open into the sea. Caves are dark: bring lamps.
+The world goes down to y = -64, where an unbreakable bedrock floor ends it; below y = 0 the stone turns into darker, harder deepstone. Branching tunnels wind up and down through it and join up into large cave networks, with big caverns mostly in the deepstone. In scattered patches of dry land tunnels lead down from the surface; caves never open into the sea. Caves are dark: bring lamps. The default vertical range (Min chunk y in the debug UI) is -2, which loads everything down to the bedrock.
 
 ## Saves
 
-Edits and the player's position are saved in a `saves/` folder next to the executable (`zig-out/bin/saves`), one `world-<seed>` folder per seed: every 30 seconds, when chunks unload, when switching seeds and on exit. Delete a world's folder to start it over. Chunks you edited before caves existed keep their saved blocks, so a cave can end abruptly at the edge of one.
+Edits and the player's position are saved in a `saves/` folder next to the executable (`zig-out/bin/saves`), one `world-<seed>` folder per seed: every 30 seconds, when chunks unload, when switching seeds and on exit. Delete a world's folder to start it over. Chunks you edited keep their saved blocks when cave generation changes, so a cave can end abruptly at the edge of one in older worlds.
 
 ## Benchmark
 

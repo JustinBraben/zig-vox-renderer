@@ -244,6 +244,17 @@ test "survival: digging takes the block's time, and its drop is picked up" {
     try testing.expectEqual(0, game.items.items.items.len);
 }
 
+test "survival: bedrock never breaks" {
+    var world: TestWorld = .{};
+    defer world.deinit();
+    var game = Self.init(testing.allocator, .{ 0.5, 0, 0.5 });
+    defer game.deinit();
+    try world.setBlock(1, -1, 0, .bedrock);
+    const target = hitAt(.{ 1, -1, 0 }, .bedrock);
+    for (0..600) |_| try testing.expect(!try game.dig(&world, target, true, false, test_dt));
+    try testing.expectEqual(BlockId.bedrock, world.getBlock(1, -1, 0).?);
+}
+
 test "survival: letting go or looking away starts over" {
     var world: TestWorld = .{};
     defer world.deinit();
