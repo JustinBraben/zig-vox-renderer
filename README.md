@@ -31,7 +31,7 @@ New worlds start in **survival**: blocks take time to break and drop an item to 
 
 ## Caves
 
-The world goes down to y = -64, where an unbreakable bedrock floor ends it; below y = 0 the stone turns into darker, harder deepstone. Branching tunnels wind up and down through it and join up into large cave networks, with big caverns mostly in the deepstone. In scattered patches of dry land tunnels lead down from the surface; caves never open into the sea. Caves are dark: bring lamps. The default vertical range (Min chunk y in the debug UI) is -2, which loads everything down to the bedrock.
+The world goes down to y = -64, where an unbreakable bedrock floor ends it; below y = 0 the stone turns into darker, harder deepstone. Branching tunnels wind up and down through it and join up into large cave networks, with big caverns mostly in the deepstone. In scattered patches of dry land tunnels lead down from the surface; caves never open into the sea. Ore veins run through the rock and show up on cave walls: coal from just below sea level up to the surface, iron in the middle depths, gold in the deepstone, and rare glowing crystal only near the bottom. In survival, mining an ore drops that block. Caves are dark: bring lamps. The default vertical range (Min chunk y in the debug UI) is -2, which loads everything down to the bedrock.
 
 ## Saves
 

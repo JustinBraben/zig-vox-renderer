@@ -896,6 +896,7 @@ fn buildChunk(allocator: Allocator, terrain: Terrain, pos: ChunkPos, map: *const
             c.blocks = blocks;
         }
         c.updateSolidSides();
+        c.updateAllOpaque();
         return c;
     }
     var caves: Terrain.Caves = undefined;
@@ -919,6 +920,7 @@ fn buildChunk(allocator: Allocator, terrain: Terrain, pos: ChunkPos, map: *const
         },
     }
     c.updateSolidSides();
+    c.updateAllOpaque();
     return c;
 }
 
@@ -953,10 +955,10 @@ fn neighborsLoaded(self: *const Self, pos: ChunkPos) bool {
     return true;
 }
 
-/// True when no face of the chunk can be visible: it is solid and each face
-/// neighbor's side touching it is solid too.
+/// True when no face of the chunk can be visible: every block in it is opaque (rock,
+/// maybe with ore inside) and each face neighbor's side touching it is solid.
 fn buried(self: *const Self, c: *const Chunk) bool {
-    if (!c.isSolid()) return false;
+    if (!c.all_opaque) return false;
     // same side order as `Chunk.solid_sides`; side ^ 1 is the opposite side
     const neighbors = [6][3]i32{ .{ 1, 0, 0 }, .{ -1, 0, 0 }, .{ 0, 1, 0 }, .{ 0, -1, 0 }, .{ 0, 0, 1 }, .{ 0, 0, -1 } };
     for (neighbors, 0..) |d, side| {

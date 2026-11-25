@@ -20,6 +20,10 @@ pub const BlockId = enum(u8) {
     lamp,
     deepstone,
     bedrock,
+    coal_ore,
+    iron_ore,
+    gold_ore,
+    crystal_ore,
     _,
 
     /// Every named block except air, in declaration order (the player's block palette).
@@ -88,6 +92,9 @@ pub const BlockId = enum(u8) {
             .stone => 2.25,
             .cobblestone => 2.5,
             .deepstone => 3.25,
+            .coal_ore => 3.0,
+            .iron_ore => 3.5,
+            .gold_ore, .crystal_ore => 4.0,
             // never breaks in survival
             .bedrock => std.math.inf(f32),
             else => 1,
@@ -106,7 +113,12 @@ pub const BlockId = enum(u8) {
 
     /// Block light given off, 0..15.
     pub fn lightEmission(self: BlockId) u4 {
-        return if (self == .lamp) 15 else 0;
+        return switch (self) {
+            .lamp => 15,
+            // a faint glow, so crystal shows up in a dark cave
+            .crystal_ore => 4,
+            else => 0,
+        };
     }
 
     /// Whether the face of `self` towards `neighbor` is drawn.
@@ -138,6 +150,10 @@ pub const BlockId = enum(u8) {
             .lamp => all(.lamp),
             .deepstone => all(.deepstone),
             .bedrock => all(.bedrock),
+            .coal_ore => all(.coal_ore),
+            .iron_ore => all(.iron_ore),
+            .gold_ore => all(.gold_ore),
+            .crystal_ore => all(.crystal_ore),
             _ => null,
         };
     }
@@ -163,6 +179,10 @@ pub const BlockId = enum(u8) {
             .lamp => rgb(0xf4, 0xc8, 0x6a),
             .deepstone => rgb(0x56, 0x57, 0x60),
             .bedrock => rgb(0x50, 0x50, 0x50),
+            .coal_ore => rgb(0x2a, 0x2a, 0x2e),
+            .iron_ore => rgb(0xc8, 0x94, 0x6e),
+            .gold_ore => rgb(0xf0, 0xc8, 0x3c),
+            .crystal_ore => rgb(0x6a, 0xe0, 0xe8),
             _ => rgb(0xff, 0x00, 0xff),
         };
     }
@@ -190,6 +210,10 @@ pub const Tile = enum(u8) {
     lamp,
     deepstone,
     bedrock,
+    coal_ore,
+    iron_ore,
+    gold_ore,
+    crystal_ore,
     /// overlay on a block being broken, from just started to almost done
     crack_0,
     crack_1,

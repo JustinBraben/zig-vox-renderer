@@ -41,8 +41,12 @@ pub fn main(init: std.process.Init) !void {
     try std.Io.Dir.cwd().writeFile(init.io, .{ .sub_path = args[1], .data = png });
 }
 
+fn tileSeed(tile: Tile) u32 {
+    return @as(u32, @intFromEnum(tile)) *% 0x9e3779b9;
+}
+
 fn texel(tile: Tile, x: i32, y: i32) Rgba {
-    const seed = @as(u32, @intFromEnum(tile)) *% 0x9e3779b9;
+    const seed = tileSeed(tile);
     return switch (tile) {
         .grass_top => grassTop(x, y, seed),
         .grass_side => if (y < fringe(x, seed, 2, 3)) grassTop(x, y, seed) else dirt(x, y, seed),
@@ -92,20 +96,18 @@ fn texel(tile: Tile, x: i32, y: i32) Rgba {
             const glow = 1 - @max(@abs(dx), @abs(dy)) / 8;
             break :blk shade(BlockId.lamp.color(), 0.85 + 0.25 * glow + 0.08 * fbm(seed, x, y, 4));
         },
-        .deepstone => blk: {
-            // darker than stone, with faint horizontal layers
-            const n = fbm(seed, x, y, 4);
-            const level = @floor(n * 4) / 4;
-            const layer = valueNoise(seed +% 5, x, y, 1, 4);
-            const fleck = hash(seed +% 3, x, y) > 0.95;
-            break :blk shade(BlockId.deepstone.color(), 0.8 + 0.25 * level + 0.15 * layer + @as(f32, if (fleck) 0.2 else 0));
-        },
+        .deepstone => deepstoneTexel(x, y, seed),
         .bedrock => blk: {
             // coarse light and dark blotches
             const n = valueNoise(seed, x, y, 4, 4) * 0.7 + 0.3 * hash(seed, x, y);
             const f: f32 = if (n > 0.62) 1.5 else if (n > 0.4) 1.0 else 0.55;
             break :blk shade(BlockId.bedrock.color(), f);
         },
+        // on the same rock as the stone and deepstone tiles, so they blend in
+        .coal_ore => ore(x, y, seed, stone(x, y, tileSeed(.stone)), .coal_ore, 6),
+        .iron_ore => ore(x, y, seed, stone(x, y, tileSeed(.stone)), .iron_ore, 5),
+        .gold_ore => ore(x, y, seed, deepstoneTexel(x, y, tileSeed(.deepstone)), .gold_ore, 4),
+        .crystal_ore => ore(x, y, seed, deepstoneTexel(x, y, tileSeed(.deepstone)), .crystal_ore, 4),
         .glass => blk: {
             const edge = x == 0 or y == 0 or x == tile_size - 1 or y == tile_size - 1;
             if (edge) break :blk shade(rgb(0xd8, 0xe4, 0xec), 0.9 + 0.1 * hash(seed, x, y));
@@ -183,6 +185,39 @@ fn dirt(x: i32, y: i32, seed: u32) Rgba {
     const speck = hash(s, x, y);
     const f = 0.82 + 0.3 * fbm(s, x, y, 4) + @as(f32, if (speck > 0.93) 0.2 else if (speck < 0.06) -0.2 else 0);
     return shade(BlockId.dirt.color(), f);
+}
+
+fn deepstoneTexel(x: i32, y: i32, seed: u32) Rgba {
+    // darker than stone, with faint horizontal layers
+    const n = fbm(seed, x, y, 4);
+    const level = @floor(n * 4) / 4;
+    const layer = valueNoise(seed +% 5, x, y, 1, 4);
+    const fleck = hash(seed +% 3, x, y) > 0.95;
+    return shade(BlockId.deepstone.color(), 0.8 + 0.25 * level + 0.15 * layer + @as(f32, if (fleck) 0.2 else 0));
+}
+
+/// `host` rock with `count` small lumps of `ore`'s color, lit from the top left.
+fn ore(x: i32, y: i32, seed: u32, host: Rgba, block_id: BlockId, count: i32) Rgba {
+    const px = @as(f32, @floatFromInt(x)) + 0.5;
+    const py = @as(f32, @floatFromInt(y)) + 0.5;
+    var i: i32 = 0;
+    while (i < count) : (i += 1) {
+        const cx = hash(seed +% 7, i, 0) * tile_size;
+        const cy = hash(seed +% 7, i, 1) * tile_size;
+        const r = 1.4 + 1.1 * hash(seed +% 7, i, 2);
+        // nearest wrapped copy, so lumps cross the tile edge seamlessly
+        var dx = px - cx;
+        var dy = py - cy;
+        dx -= @round(dx / tile_size) * tile_size;
+        dy -= @round(dy / tile_size) * tile_size;
+        // a little noise on the outline, so lumps aren't perfect discs
+        const d = @sqrt(dx * dx + dy * dy) + 0.6 * (hash(seed +% 9, x, y) - 0.5);
+        if (d > r) continue;
+        // brighter towards the top left, darker on the far rim
+        const light = 1.0 - 0.12 * (dx + dy) / r + @as(f32, if (d > r - 0.7) -0.25 else 0.1);
+        return shade(block_id.color(), light);
+    }
+    return host;
 }
 
 fn stone(x: i32, y: i32, seed: u32) Rgba {

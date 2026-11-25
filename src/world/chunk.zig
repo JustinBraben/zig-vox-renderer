@@ -65,6 +65,9 @@ pub const Chunk = struct {
     /// bit per side (+X, -X, +Y, -Y, +Z, -Z, as in the mesher), set when that
     /// whole boundary layer is opaque; see `updateSolidSides`
     solid_sides: u6 = 0,
+    /// every block is opaque (solid rock, maybe with ore in it), so nothing inside can
+    /// be seen while the neighbors cover its sides; see `updateSolidSides`, `updateAllOpaque`
+    all_opaque: bool = false,
     /// edited since it was last written to the save (world.zig)
     modified: bool = false,
     /// null when every block has `uniform_light`
@@ -113,7 +116,20 @@ pub const Chunk = struct {
             break :blk blocks;
         };
         blocks[index(x, y, z)] = block;
+        // placing an opaque block back doesn't restore it; that only costs a mesh
+        if (!block.isOpaque()) self.all_opaque = false;
         self.updateSolidSides();
+    }
+
+    /// Recomputes `all_opaque` from the block data, for a newly built chunk.
+    pub fn updateAllOpaque(self: *Chunk) void {
+        const blocks = self.blocks orelse {
+            self.all_opaque = self.uniform.isOpaque();
+            return;
+        };
+        self.all_opaque = for (blocks) |b| {
+            if (!b.isOpaque()) break false;
+        } else true;
     }
 
     pub fn isSolid(self: *const Chunk) bool {
@@ -124,6 +140,7 @@ pub const Chunk = struct {
     pub fn updateSolidSides(self: *Chunk) void {
         const blocks = self.blocks orelse {
             self.solid_sides = if (self.uniform.isOpaque()) 0b111111 else 0;
+            self.all_opaque = self.uniform.isOpaque();
             return;
         };
         self.solid_sides = 0;

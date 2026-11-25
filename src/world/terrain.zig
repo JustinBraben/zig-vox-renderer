@@ -133,10 +133,12 @@ pub fn classify(self: Self, chunk_y: i32, map: *const Heightmap, caves: *Caves) 
         caves.tunnels = tunnelsCross(map, y0);
     }
     // blocks at least `stone_depth` below the surface are stone (deepstone further
-    // down), unless a cave runs through
+    // down), unless a cave or an ore vein runs through
     if (y1 <= map.min - stone_depth and !caves.any and !caves.tunnels) {
-        if (y0 >= deepstone_line) return .{ .uniform = .stone };
-        if (y1 < 0 and y0 >= world_bottom + bedrock_layers) return .{ .uniform = .deepstone };
+        var veins_buffer: [max_veins]Vein = undefined;
+        const has_ore = self.veins(@divExact(map.x, chunk.size), chunk_y, @divExact(map.z, chunk.size), &veins_buffer) > 0;
+        if (!has_ore and y0 >= deepstone_line) return .{ .uniform = .stone };
+        if (!has_ore and y1 < 0 and y0 >= world_bottom + bedrock_layers) return .{ .uniform = .deepstone };
     }
     return .mixed;
 }
@@ -164,6 +166,8 @@ pub fn fill(self: Self, chunk_y: i32, map: *const Heightmap, caves: *const Caves
             }
         }
     }
+    // before the caves, so they cut through the veins and show them on their walls
+    self.placeOres(chunk_y, map, blocks);
     if (caves.any) carve(y0, map, caves, blocks);
     if (caves.tunnels) carveTunnels(y0, map, blocks);
 
@@ -197,7 +201,8 @@ pub fn block(self: Self, x: i32, y: i32, z: i32) BlockId {
 /// `block`, with the tunnel spheres within `sphere_pad` of (x, z) (sideways) if the
 /// caller has them, or null to collect them when needed.
 fn blockWith(self: Self, x: i32, y: i32, z: i32, spheres: ?[]const Sphere) BlockId {
-    const ground_block = self.ground(x, y, z, self.height(x, z));
+    var ground_block = self.ground(x, y, z, self.height(x, z));
+    if (ground_block == .stone or ground_block == .deepstone) ground_block = self.oreAt(x, y, z) orelse ground_block;
     if (ground_block == .water) return ground_block;
     if (ground_block != .air and !self.carved(x, y, z, spheres)) return ground_block;
     // the first tree wins, as in `fill`
@@ -360,6 +365,130 @@ fn treeBlock(self: Self, t: Tree, x: i32, y: i32, z: i32) ?BlockId {
             if (dx * dx + dz * dz > @max(r * r + r - 1, 0)) return null;
             return .leaves;
         },
+    }
+}
+
+/// Ore that veins of `block` are made of, in the y range `lo`..`hi` (inclusive). Each
+/// chunk-sized cell makes `tries` attempts at a vein, each kept with probability
+/// `chance`/256, and veins have radii between `r_min` and `r_max` per axis.
+const OreKind = struct {
+    block: BlockId,
+    lo: i32,
+    hi: i32,
+    tries: u32,
+    chance: u32,
+    r_min: f32,
+    r_max: f32,
+};
+
+const ore_kinds = [_]OreKind{
+    .{ .block = .coal_ore, .lo = -10, .hi = 160, .tries = 6, .chance = 128, .r_min = 1.5, .r_max = 2.8 },
+    .{ .block = .iron_ore, .lo = -50, .hi = 40, .tries = 4, .chance = 110, .r_min = 1.2, .r_max = 2.2 },
+    .{ .block = .gold_ore, .lo = world_bottom, .hi = -10, .tries = 2, .chance = 100, .r_min = 1.0, .r_max = 1.8 },
+    .{ .block = .crystal_ore, .lo = world_bottom, .hi = -41, .tries = 1, .chance = 80, .r_min = 0.8, .r_max = 1.4 },
+};
+
+pub const max_veins = blk: {
+    var n = 0;
+    for (ore_kinds) |k| n += k.tries;
+    break :blk n;
+};
+
+/// Vein centers stay this far from the edges of their cell, more than any radius, so a
+/// vein never leaves the chunk it belongs to.
+const vein_margin = 3;
+
+/// An ellipsoid of ore, only in stone and deepstone; a quarter of its blocks, picked
+/// by hash, are left as they were so it looks rough.
+pub const Vein = struct {
+    center: [3]f32,
+    radius: [3]f32,
+    lo: i32,
+    hi: i32,
+    block: BlockId,
+
+    fn contains(self: Vein, terrain: Self, x: i32, y: i32, z: i32) bool {
+        if (y < self.lo or y > self.hi) return false;
+        var d: f32 = 0;
+        for ([3]i32{ x, y, z }, self.center, self.radius) |p, c, r| {
+            const t = (@as(f32, @floatFromInt(p)) - c) / r;
+            d += t * t;
+        }
+        return d <= 1 and terrain.hash3(x, y, z, 31) & 3 != 0;
+    }
+
+    /// Block bounds (inclusive) of the ellipsoid.
+    fn bounds(self: Vein) [2][3]i32 {
+        var lo: [3]i32 = undefined;
+        var hi: [3]i32 = undefined;
+        for (self.center, self.radius, &lo, &hi) |c, r, *l, *h| {
+            l.* = @intFromFloat(@ceil(c - r));
+            h.* = @intFromFloat(@floor(c + r));
+        }
+        return .{ lo, hi };
+    }
+};
+
+/// The ore veins of the chunk-sized cell (cx, cy, cz), into `out`; returns how many.
+/// The first vein listed wins where veins overlap.
+pub fn veins(self: Self, cx: i32, cy: i32, cz: i32, out: *[max_veins]Vein) usize {
+    var n: usize = 0;
+    var salt: u64 = 0;
+    for (ore_kinds) |kind| {
+        for (0..kind.tries) |_| {
+            salt += 1;
+            const h = self.hash3(cx, cy, cz, 40 + salt);
+            if (h & 0xff >= kind.chance) continue;
+            const span = chunk.size - 1 - 2 * vein_margin;
+            var center: [3]f32 = undefined;
+            for (&center, [3]i32{ cx, cy, cz }, 0..) |*c, cell_pos, axis| {
+                const offset: i32 = @intCast((h >> @intCast(8 + 8 * axis)) % (span + 1));
+                c.* = @floatFromInt(cell_pos * chunk.size + vein_margin + offset);
+            }
+            const y: i32 = @intFromFloat(center[1]);
+            if (y < kind.lo or y > kind.hi) continue;
+            var radius: [3]f32 = undefined;
+            for (&radius, 0..) |*r, axis| {
+                const t = @as(f32, @floatFromInt((h >> @intCast(32 + 8 * axis)) & 0xff)) / 255;
+                r.* = std.math.lerp(kind.r_min, kind.r_max, t);
+            }
+            out[n] = .{ .center = center, .radius = radius, .lo = kind.lo, .hi = kind.hi, .block = kind.block };
+            n += 1;
+        }
+    }
+    return n;
+}
+
+/// The ore at (x, y, z) if that block is stone or deepstone, as `placeOres` puts it.
+fn oreAt(self: Self, x: i32, y: i32, z: i32) ?BlockId {
+    var buffer: [max_veins]Vein = undefined;
+    const n = self.veins(@divFloor(x, chunk.size), @divFloor(y, chunk.size), @divFloor(z, chunk.size), &buffer);
+    for (buffer[0..n]) |v| {
+        if (v.contains(self, x, y, z)) return v.block;
+    }
+    return null;
+}
+
+/// Turns the stone and deepstone inside the veins of the chunk at height `chunk_y` of
+/// `map`'s column into ore.
+fn placeOres(self: Self, chunk_y: i32, map: *const Heightmap, blocks: *chunk.Blocks) void {
+    var buffer: [max_veins]Vein = undefined;
+    const n = self.veins(@divExact(map.x, chunk.size), chunk_y, @divExact(map.z, chunk.size), &buffer);
+    const origin = [3]i32{ map.x, chunk_y * chunk.size, map.z };
+    for (buffer[0..n]) |v| {
+        const lo, const hi = v.bounds();
+        var y = lo[1];
+        while (y <= hi[1]) : (y += 1) {
+            var z = lo[2];
+            while (z <= hi[2]) : (z += 1) {
+                var x = lo[0];
+                while (x <= hi[0]) : (x += 1) {
+                    const i = chunk.index(@intCast(x - origin[0]), @intCast(y - origin[1]), @intCast(z - origin[2]));
+                    if (blocks[i] != .stone and blocks[i] != .deepstone) continue;
+                    if (v.contains(self, x, y, z)) blocks[i] = v.block;
+                }
+            }
+        }
     }
 }
 
@@ -1045,4 +1174,75 @@ test "spawn is on solid ground" {
     const x, const h, const z = terrain.spawnColumn(0, 0);
     try std.testing.expect(terrain.block(x, h, z) != .air);
     try std.testing.expectEqual(BlockId.air, terrain.block(x, h + 1, z));
+}
+
+test "ore veins stay inside their cell and their depth band" {
+    const terrain: Self = .{ .seed = 1337 };
+    var found: std.EnumSet(BlockId) = .initEmpty();
+    var buffer: [max_veins]Vein = undefined;
+    var cx: i32 = -4;
+    while (cx <= 4) : (cx += 1) {
+        var cy: i32 = -2;
+        while (cy <= 3) : (cy += 1) {
+            var cz: i32 = -4;
+            while (cz <= 4) : (cz += 1) {
+                const n = terrain.veins(cx, cy, cz, &buffer);
+                for (buffer[0..n]) |v| {
+                    found.insert(v.block);
+                    const lo, const hi = v.bounds();
+                    for (lo, hi, [3]i32{ cx, cy, cz }) |l, h, c| {
+                        try std.testing.expect(l >= c * chunk.size);
+                        try std.testing.expect(h < (c + 1) * chunk.size);
+                    }
+                    const y: i32 = @intFromFloat(v.center[1]);
+                    try std.testing.expect(y >= v.lo and y <= v.hi);
+                    if (v.block == .crystal_ore) try std.testing.expect(y <= -41);
+                }
+            }
+        }
+    }
+    for ([_]BlockId{ .coal_ore, .iron_ore, .gold_ore, .crystal_ore }) |ore| try std.testing.expect(found.contains(ore));
+}
+
+test "buried chunks with ore are generated in full and match the per-block function" {
+    const terrain: Self = .{ .seed = 1337 };
+    const blocks = try std.testing.allocator.create(chunk.Blocks);
+    defer std.testing.allocator.destroy(blocks);
+    var ores: usize = 0;
+    var cx: i32 = 0;
+    while (cx < 8) : (cx += 1) {
+        var map: Heightmap = undefined;
+        terrain.heightmap(cx, -cx, &map);
+        var cy: i32 = -2;
+        while (cy <= 1) : (cy += 1) {
+            var caves: Caves = undefined;
+            const content = terrain.classify(cy, &map, &caves);
+            terrain.fill(cy, &map, &caves, blocks);
+            if (content == .uniform) {
+                for (blocks) |b| try std.testing.expectEqual(content.uniform, b);
+                continue;
+            }
+            for (0..chunk.size) |y| {
+                const wy = cy * chunk.size + @as(i32, @intCast(y));
+                for (0..chunk.size) |z| {
+                    for (0..chunk.size) |x| {
+                        const b = blocks[chunk.index(x, y, z)];
+                        switch (b) {
+                            .coal_ore => try std.testing.expect(wy >= -10),
+                            .iron_ore => try std.testing.expect(wy >= -50 and wy <= 40),
+                            .gold_ore => try std.testing.expect(wy <= -10),
+                            .crystal_ore => try std.testing.expect(wy <= -41),
+                            else => continue,
+                        }
+                        ores += 1;
+                        // spot checks, the per-block function is slow
+                        if (ores % 16 == 0) {
+                            try std.testing.expectEqual(b, terrain.block(map.x + @as(i32, @intCast(x)), wy, map.z + @as(i32, @intCast(z))));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    try std.testing.expect(ores > 0);
 }
