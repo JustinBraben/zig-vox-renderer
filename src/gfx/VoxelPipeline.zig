@@ -5,13 +5,13 @@
 
 const std = @import("std");
 
-const VulkanContext = @import("vulkan_context.zig");
+const VulkanContext = @import("VulkanContext.zig");
 const vk = VulkanContext.vk;
 const VkMemory = @import("dvui_vulkan_renderer").VkMemory;
-const Buffer = @import("buffer.zig");
-const MeshArena = @import("mesh_arena.zig");
-const Texture = @import("texture.zig");
-const Assets = @import("../assets.zig");
+const Buffer = @import("Buffer.zig");
+const MeshArena = @import("MeshArena.zig");
+const Texture = @import("Texture.zig");
+const Assets = @import("../Assets.zig");
 const math = @import("../math.zig");
 
 const Self = @This();

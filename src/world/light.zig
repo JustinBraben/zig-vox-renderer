@@ -13,13 +13,12 @@
 //! loaded chunks; chunks loaded later pull it in.
 
 const std = @import("std");
-const chunk = @import("chunk.zig");
-const Chunk = chunk.Chunk;
+const Chunk = @import("Chunk.zig");
 const BlockId = @import("block.zig").BlockId;
-const Terrain = @import("terrain.zig");
-const World = @import("world.zig");
+const Terrain = @import("Terrain.zig");
+const World = @import("World.zig");
 
-const size = chunk.size;
+const size = Chunk.size;
 
 pub const max = 15;
 
@@ -82,7 +81,7 @@ pub const Queues = struct {
     /// chunks whose mesh an edit made stale
     touched: std.ArrayList(*Chunk) = .empty,
     /// sky levels of a chunk being seeded
-    scratch: chunk.Light = undefined,
+    scratch: Chunk.Light = undefined,
 
     /// Forgets queued work, after an error left some behind.
     pub fn clear(self: *Queues) void {
@@ -186,7 +185,7 @@ fn seed(s: Space, c: *Chunk, above: ?*const Chunk, map: *const Terrain.Heightmap
     if (std.mem.allEqual(u8, scratch, first)) {
         c.uniform_light = first;
     } else {
-        const light = try s.allocator.create(chunk.Light);
+        const light = try s.allocator.create(Chunk.Light);
         light.* = scratch.*;
         c.light = light;
         // seeding settles each column from top to bottom, so inside the chunk only the
@@ -199,7 +198,7 @@ fn seed(s: Space, c: *Chunk, above: ?*const Chunk, map: *const Terrain.Heightmap
 
 /// Queues the blocks of `c` that give off light, to spread their block light.
 fn queueEmitters(s: Space, c: *Chunk) !void {
-    for (0..chunk.volume) |i| {
+    for (0..Chunk.volume) |i| {
         if (emissions[@intFromEnum(c.getIndex(i))] > 0) try s.queues.add.append(s.allocator, .{ .c = c, .i = @intCast(i) });
     }
 }
@@ -213,7 +212,7 @@ fn uniformSeed(c: *const Chunk, above: ?*const Chunk, map: *const Terrain.Height
     for (0..size) |z| {
         for (0..size) |x| {
             const v = if (above) |a|
-                level(a.getLight(chunk.index(x, 0, z)), .sky)
+                level(a.getLight(Chunk.index(x, 0, z)), .sky)
             else
                 estimateSky(c.pos.y * size + size, map.heights[z][x]);
             if (v != max) return null;
@@ -224,20 +223,20 @@ fn uniformSeed(c: *const Chunk, above: ?*const Chunk, map: *const Terrain.Height
 
 /// Sky levels of a new chunk from the light falling into it, plus block light of
 /// its emitters, written into `out`. Returns whether there are any emitters.
-fn seedSky(c: *const Chunk, above: ?*const Chunk, map: *const Terrain.Heightmap, out: *chunk.Light) bool {
+fn seedSky(c: *const Chunk, above: ?*const Chunk, map: *const Terrain.Heightmap, out: *Chunk.Light) bool {
     const y0 = c.pos.y * size;
     var emitters = false;
     for (0..size) |z| {
         for (0..size) |x| {
             // level of the block just above the chunk
             var v: u4 = if (above) |a|
-                level(a.getLight(chunk.index(x, 0, z)), .sky)
+                level(a.getLight(Chunk.index(x, 0, z)), .sky)
             else
                 estimateSky(y0 + size, map.heights[z][x]);
             var y: usize = size;
             while (y > 0) {
                 y -= 1;
-                const i = chunk.index(x, y, z);
+                const i = Chunk.index(x, y, z);
                 const block = if (c.blocks) |blocks| blocks[i] else c.uniform;
                 v = spread(v, block, .sky, down);
                 const emission = emissions[@intFromEnum(block)];
@@ -260,14 +259,14 @@ fn estimateSky(y: i32, surface: i32) u4 {
 
 /// Queues the blocks of `c` that can raise the sky light of a neighbor in x or z
 /// within the chunk.
-fn queueSideways(s: Space, c: *Chunk, light: *const chunk.Light) !void {
+fn queueSideways(s: Space, c: *Chunk, light: *const Chunk.Light) !void {
     for (0..size) |y| {
         // evenly lit layers (open air, solid rock) have nothing to spread
         const layer = light[y * size * size ..][0 .. size * size];
         if (std.mem.allEqual(u8, layer, layer[0])) continue;
         for (0..size) |z| {
             for (0..size) |x| {
-                const i = chunk.index(x, y, z);
+                const i = Chunk.index(x, y, z);
                 const v: u4 = @intCast(light[i] >> 4);
                 if (v <= 1) continue;
                 if ((x > 0 and raises(c, light, v, i - 1)) or
@@ -283,7 +282,7 @@ fn queueSideways(s: Space, c: *Chunk, light: *const chunk.Light) !void {
 }
 
 /// Whether sky light `v` spreading sideways into block `j` brightens it.
-inline fn raises(c: *const Chunk, light: *const chunk.Light, v: u4, j: usize) bool {
+inline fn raises(c: *const Chunk, light: *const Chunk.Light, v: u4, j: usize) bool {
     const current: u4 = @intCast(light[j] >> 4);
     // cheap test first: nothing to gain unless it is at least two levels darker
     return @as(u5, current) + 1 < v and spread(v, c.getIndex(j), .sky, 0) > current;
@@ -312,8 +311,8 @@ fn exchangeFaces(s: Space, c: *Chunk, channel: Channel) !void {
                 pa[(axis + 2) % 3] = b;
                 var pb = pa;
                 pb[axis] = size - 1 - pa[axis];
-                const ia = chunk.index(pa[0], pa[1], pa[2]);
-                const ib = chunk.index(pb[0], pb[1], pb[2]);
+                const ia = Chunk.index(pa[0], pa[1], pa[2]);
+                const ib = Chunk.index(pb[0], pb[1], pb[2]);
                 const va = level(c.getLight(ia), channel);
                 const vb = level(n.getLight(ib), channel);
                 // light never raises an equally lit block
@@ -501,5 +500,5 @@ fn coords(i: usize) [3]i32 {
 }
 
 fn index(p: [3]i32) usize {
-    return chunk.index(@intCast(p[0]), @intCast(p[1]), @intCast(p[2]));
+    return Chunk.index(@intCast(p[0]), @intCast(p[1]), @intCast(p[2]));
 }

@@ -3,11 +3,11 @@
 
 const std = @import("std");
 
-const VulkanContext = @import("vulkan_context.zig");
+const VulkanContext = @import("VulkanContext.zig");
 const vk = VulkanContext.vk;
-const VoxelPipeline = @import("voxel_pipeline.zig");
+const VoxelPipeline = @import("VoxelPipeline.zig");
 const Pipeline = @import("pipeline.zig");
-const Assets = @import("../assets.zig");
+const Assets = @import("../Assets.zig");
 
 const Self = @This();
 

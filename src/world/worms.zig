@@ -9,7 +9,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
-const chunk = @import("chunk.zig");
+const Chunk = @import("Chunk.zig");
 
 /// One step of a tunnel: an ellipsoid, round across and `ry` tall.
 pub const Sphere = struct {
@@ -54,16 +54,16 @@ const entrance_tries = 0.6;
 
 /// Collects every tunnel sphere whose box overlaps the blocks [x0, x1] × [z0, z1] (any
 /// height) into `out`, in a fixed order. Returns how many there are; ones past the end
-/// of `out` are dropped. `terrain` has a `seed`, a `worms: ?*Cache` to keep the
+/// of `out` are dropped. `terrain` has a `seed`, a `worm_cache: ?*Cache` to keep the
 /// systems in, and an `entranceHeight(x, z) ?i32` method: the surface height where a
 /// tunnel may break through it, or null.
 pub fn collect(terrain: anytype, x0: i32, z0: i32, x1: i32, z1: i32, out: []Sphere) usize {
     var sink: Sink = .{ .lo = .{ x0, std.math.minInt(i32) / 2, z0 }, .hi = .{ x1, std.math.maxInt(i32) / 2, z1 }, .out = out };
-    var cz = @divFloor(z0 - reach, chunk.size);
-    while (cz <= @divFloor(z1 + reach, chunk.size)) : (cz += 1) {
-        var cx = @divFloor(x0 - reach, chunk.size);
-        while (cx <= @divFloor(x1 + reach, chunk.size)) : (cx += 1) {
-            if (terrain.worms) |cache| {
+    var cz = @divFloor(z0 - reach, Chunk.size);
+    while (cz <= @divFloor(z1 + reach, Chunk.size)) : (cz += 1) {
+        var cx = @divFloor(x0 - reach, Chunk.size);
+        while (cx <= @divFloor(x1 + reach, Chunk.size)) : (cx += 1) {
+            if (terrain.worm_cache) |cache| {
                 if (cache.collect(terrain, .{ cx, cz }, &sink)) continue;
             }
             system(terrain, cx, cz, &sink);
@@ -193,14 +193,14 @@ const Sink = struct {
 fn system(terrain: anytype, cx: i32, cz: i32, sink: *Sink) void {
     var prng = std.Random.DefaultPrng.init(hash(terrain.seed, cx, cz));
     const rng = prng.random();
-    const column_x: f32 = @floatFromInt(cx * chunk.size);
-    const column_z: f32 = @floatFromInt(cz * chunk.size);
+    const column_x: f32 = @floatFromInt(cx * Chunk.size);
+    const column_z: f32 = @floatFromInt(cz * Chunk.size);
 
     const roll = rng.float(f32);
     const systems: u32 = if (roll < two_systems) 2 else if (roll < one_system) 1 else 0;
     for (0..systems) |_| {
-        const x = column_x + rng.float(f32) * chunk.size;
-        const z = column_z + rng.float(f32) * chunk.size;
+        const x = column_x + rng.float(f32) * Chunk.size;
+        const z = column_z + rng.float(f32) * Chunk.size;
         // biased deep: a random height below a random height
         const span: u32 = start_max - start_min;
         const y = @as(f32, @floatFromInt(start_min + @as(i32, @intCast(rng.uintLessThan(u32, rng.uintLessThan(u32, span) + 1))))) + 0.5;
@@ -221,8 +221,8 @@ fn system(terrain: anytype, cx: i32, cz: i32, sink: *Sink) void {
     }
 
     if (rng.float(f32) < entrance_tries) {
-        const x = column_x + rng.float(f32) * chunk.size;
-        const z = column_z + rng.float(f32) * chunk.size;
+        const x = column_x + rng.float(f32) * Chunk.size;
+        const z = column_z + rng.float(f32) * Chunk.size;
         const yaw = rng.float(f32) * std.math.tau;
         const width = 0.8 + rng.float(f32) * 1.2;
         const steps = 90 + rng.uintLessThan(u32, 23);
@@ -289,7 +289,7 @@ fn hash(seed: u64, x: i32, z: i32) u64 {
 /// Flat ground at y = 40 with an entrance everywhere.
 const TestTerrain = struct {
     seed: u64,
-    worms: ?*Cache = null,
+    worm_cache: ?*Cache = null,
 
     fn entranceHeight(_: TestTerrain, _: i32, _: i32) ?i32 {
         return 40;
@@ -306,11 +306,11 @@ test "tunnels stay within reach of their column" {
             var sink: Sink = .{ .lo = .{ -far, -far, -far }, .hi = .{ far, far, far }, .out = &out };
             system(TestTerrain{ .seed = 42 }, cx, cz, &sink);
             try std.testing.expect(sink.count <= out.len);
-            const x0: f32 = @floatFromInt(cx * chunk.size);
-            const z0: f32 = @floatFromInt(cz * chunk.size);
+            const x0: f32 = @floatFromInt(cx * Chunk.size);
+            const z0: f32 = @floatFromInt(cz * Chunk.size);
             for (out[0..sink.count]) |s| {
-                try std.testing.expect(s.x + s.r > x0 - reach and s.x - s.r < x0 + chunk.size + reach);
-                try std.testing.expect(s.z + s.r > z0 - reach and s.z - s.r < z0 + chunk.size + reach);
+                try std.testing.expect(s.x + s.r > x0 - reach and s.x - s.r < x0 + Chunk.size + reach);
+                try std.testing.expect(s.z + s.r > z0 - reach and s.z - s.r < z0 + Chunk.size + reach);
             }
         }
     }
@@ -339,13 +339,13 @@ test "cached tunnels are the same as walked ones" {
     try std.testing.expect(n > 0 and n <= direct.len);
     // twice: walking them into the cache, then from it
     for (0..2) |_| {
-        const m = collect(TestTerrain{ .seed = 42, .worms = &cache }, 0, 0, 31, 31, &cached);
+        const m = collect(TestTerrain{ .seed = 42, .worm_cache = &cache }, 0, 0, 31, 31, &cached);
         try std.testing.expectEqualSlices(Sphere, direct[0..n], cached[0..m]);
     }
     try std.testing.expect(cache.systems.count() > 0);
 
     // a generator of another seed doesn't use it
-    const other = collect(TestTerrain{ .seed = 7, .worms = &cache }, 0, 0, 31, 31, &cached);
+    const other = collect(TestTerrain{ .seed = 7, .worm_cache = &cache }, 0, 0, 31, 31, &cached);
     try std.testing.expectEqual(other, collect(TestTerrain{ .seed = 7 }, 0, 0, 31, 31, &direct));
 
     cache.retain(.{ 0, 0 }, 1);

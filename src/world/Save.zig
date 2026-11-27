@@ -16,10 +16,9 @@
 const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
-const chunk = @import("chunk.zig");
-const ChunkPos = chunk.ChunkPos;
+const Chunk = @import("Chunk.zig");
 const BlockId = @import("block.zig").BlockId;
-const Inventory = @import("../game/inventory.zig");
+const Inventory = @import("../game/Inventory.zig");
 
 const log = std.log.scoped(.save);
 
@@ -60,7 +59,7 @@ allocator: Allocator,
 /// the world's folder; null keeps everything in memory only
 dir: ?Io.Dir = null,
 /// encoded blocks of every saved chunk in the regions read so far
-chunks: std.AutoHashMapUnmanaged(ChunkPos, []u8) = .empty,
+chunks: std.AutoHashMapUnmanaged(Chunk.Pos, []u8) = .empty,
 regions: std.AutoHashMapUnmanaged([2]i32, Region) = .empty,
 
 /// A save that keeps everything in memory.
@@ -85,16 +84,16 @@ pub fn deinit(self: *Self) void {
     if (self.dir) |dir| dir.close(self.io);
 }
 
-pub fn regionOf(pos: ChunkPos) [2]i32 {
+pub fn regionOf(pos: Chunk.Pos) [2]i32 {
     return .{ @divFloor(pos.x, region_size), @divFloor(pos.z, region_size) };
 }
 
 /// The saved blocks of the chunk at `pos`, or null when it isn't saved. Free the
 /// result with `allocator`.
-pub fn load(self: *Self, allocator: Allocator, pos: ChunkPos) !?*chunk.Blocks {
+pub fn load(self: *Self, allocator: Allocator, pos: Chunk.Pos) !?*Chunk.Blocks {
     try self.readRegion(regionOf(pos));
     const data = self.chunks.get(pos) orelse return null;
-    const blocks = try allocator.create(chunk.Blocks);
+    const blocks = try allocator.create(Chunk.Blocks);
     errdefer allocator.destroy(blocks);
     decode(data, blocks) catch |err| {
         log.warn("saved chunk {d} {d} {d} is damaged: {t}", .{ pos.x, pos.y, pos.z, err });
@@ -106,7 +105,7 @@ pub fn load(self: *Self, allocator: Allocator, pos: ChunkPos) !?*chunk.Blocks {
 
 /// Saves the blocks of the chunk at `pos` (`uniform` when `blocks` is null), to be
 /// written by the next `flush`.
-pub fn store(self: *Self, pos: ChunkPos, blocks: ?*const chunk.Blocks, uniform: BlockId) !void {
+pub fn store(self: *Self, pos: Chunk.Pos, blocks: ?*const Chunk.Blocks, uniform: BlockId) !void {
     const region = regionOf(pos);
     try self.readRegion(region);
     const data = try encode(self.allocator, blocks, uniform);
@@ -222,7 +221,7 @@ fn decodeRegion(self: *Self, data: []const u8) !void {
     if (try r.int(u32) != region_version) return error.UnsupportedVersion;
     const count = try r.int(u32);
     for (0..count) |_| {
-        const pos: ChunkPos = .{ .x = try r.int(i32), .y = try r.int(i32), .z = try r.int(i32) };
+        const pos: Chunk.Pos = .{ .x = try r.int(i32), .y = try r.int(i32), .z = try r.int(i32) };
         const encoded = try r.bytes(try r.int(u32));
         const copy = try self.allocator.dupe(u8, encoded);
         errdefer self.allocator.free(copy);
@@ -266,16 +265,16 @@ fn writeAtomically(io: Io, dir: Io.Dir, name: []const u8, data: []const u8) !voi
 }
 
 /// Run-length encoded blocks; `uniform` when `blocks` is null.
-fn encode(allocator: Allocator, blocks: ?*const chunk.Blocks, uniform: BlockId) ![]u8 {
+fn encode(allocator: Allocator, blocks: ?*const Chunk.Blocks, uniform: BlockId) ![]u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
     const all = blocks orelse {
-        try appendRun(allocator, &out, chunk.volume, uniform);
+        try appendRun(allocator, &out, Chunk.volume, uniform);
         return out.toOwnedSlice(allocator);
     };
     var run_start: usize = 0;
-    for (1..chunk.volume + 1) |i| {
-        if (i < chunk.volume and all[i] == all[run_start]) continue;
+    for (1..Chunk.volume + 1) |i| {
+        if (i < Chunk.volume and all[i] == all[run_start]) continue;
         try appendRun(allocator, &out, i - run_start, all[run_start]);
         run_start = i;
     }
@@ -293,17 +292,17 @@ fn appendRun(allocator: Allocator, out: *std.ArrayList(u8), length: usize, block
     }
 }
 
-fn decode(data: []const u8, blocks: *chunk.Blocks) !void {
+fn decode(data: []const u8, blocks: *Chunk.Blocks) !void {
     var r: Reader = .{ .data = data };
     var i: usize = 0;
     while (r.at < data.len) {
         const n = try r.int(u16);
         const block: BlockId = @enumFromInt(try r.int(u8));
-        if (n > chunk.volume - i) return error.TooManyBlocks;
+        if (n > Chunk.volume - i) return error.TooManyBlocks;
         @memset(blocks[i..][0..n], block);
         i += n;
     }
-    if (i != chunk.volume) return error.TooFewBlocks;
+    if (i != Chunk.volume) return error.TooFewBlocks;
 }
 
 fn appendInt(allocator: Allocator, out: *std.ArrayList(u8), comptime T: type, value: T) !void {
@@ -344,9 +343,9 @@ const Reader = struct {
 
 const testing = std.testing;
 
-fn testBlocks() !*chunk.Blocks {
-    const blocks = try testing.allocator.create(chunk.Blocks);
-    for (blocks, 0..) |*b, i| b.* = if (i % 7 == 0) .stone else if (i < chunk.volume / 2) .dirt else .air;
+fn testBlocks() !*Chunk.Blocks {
+    const blocks = try testing.allocator.create(Chunk.Blocks);
+    for (blocks, 0..) |*b, i| b.* = if (i % 7 == 0) .stone else if (i < Chunk.volume / 2) .dirt else .air;
     return blocks;
 }
 
@@ -355,7 +354,7 @@ test "blocks survive encoding" {
     defer testing.allocator.destroy(blocks);
     const data = try encode(testing.allocator, blocks, .air);
     defer testing.allocator.free(data);
-    var decoded: chunk.Blocks = undefined;
+    var decoded: Chunk.Blocks = undefined;
     try decode(data, &decoded);
     try testing.expectEqualSlices(BlockId, blocks, &decoded);
 

@@ -4,10 +4,10 @@
 
 const std = @import("std");
 
-const VulkanContext = @import("vulkan_context.zig");
+const VulkanContext = @import("VulkanContext.zig");
 const vk = VulkanContext.vk;
-const VoxelPipeline = @import("voxel_pipeline.zig");
-const Assets = @import("../assets.zig");
+const VoxelPipeline = @import("VoxelPipeline.zig");
+const Assets = @import("../Assets.zig");
 
 pub const Options = struct {
     /// shader names in assets/shaders, without `.spv`

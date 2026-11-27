@@ -7,11 +7,11 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const chunk = @import("chunk.zig");
-const block_mod = @import("block.zig");
-const BlockId = block_mod.BlockId;
+const Chunk = @import("Chunk.zig");
+const Tile = @import("block.zig").Tile;
+const BlockId = @import("block.zig").BlockId;
 
-pub const padded_size = chunk.size + 2;
+pub const padded_size = Chunk.size + 2;
 pub const Padded = [padded_size * padded_size * padded_size]BlockId;
 /// Packed light levels (see light.zig) of a padded volume.
 pub const PaddedLight = [padded_size * padded_size * padded_size]u8;
@@ -172,9 +172,9 @@ pub const Output = struct {
 /// Appends the meshes of the padded volume's inner chunk to `out`.
 pub fn meshChunk(allocator: Allocator, padded: *const Padded, light: *const PaddedLight, options: Options, out: *Output) !void {
     const opaque_table = if (options.fast_leaves) &opaque_blocks_fast_leaves else &opaque_blocks;
-    for (1..chunk.size + 1) |y| {
-        for (1..chunk.size + 1) |z| {
-            for (1..chunk.size + 1) |x| {
+    for (1..Chunk.size + 1) |y| {
+        for (1..Chunk.size + 1) |z| {
+            for (1..Chunk.size + 1) |x| {
                 const block = padded[paddedIndex(x, y, z)];
                 const list = switch (block.layer()) {
                     .none => continue,
@@ -360,9 +360,9 @@ fn meshChunkReference(allocator: Allocator, padded: *const Padded, out: *Output)
             return v[paddedIndex(@intCast(p[0]), @intCast(p[1]), @intCast(p[2]))].isOpaque();
         }
     };
-    for (1..chunk.size + 1) |y| {
-        for (1..chunk.size + 1) |z| {
-            for (1..chunk.size + 1) |x| {
+    for (1..Chunk.size + 1) |y| {
+        for (1..Chunk.size + 1) |z| {
+            for (1..Chunk.size + 1) |x| {
                 const block = padded[paddedIndex(x, y, z)];
                 if (block.layer() == .none) continue;
                 const list = if (block.layer() == .translucent) &out.translucent else &out.solid;
@@ -425,7 +425,7 @@ test "faces get their block's texture layers" {
     try meshDark(padded, &out);
     for (out.solid.items) |v| {
         const face = (v.data >> 18) & 7;
-        const expected: block_mod.Tile = switch (face) {
+        const expected: Tile = switch (face) {
             2 => .grass_top,
             3 => .dirt,
             else => .grass_side,
@@ -514,7 +514,7 @@ test "fast leaves hide the faces between leaves and draw their gaps" {
     // leaves: 10 outer faces but the one on the stone; stone: 5 (its top is covered by leaves)
     try testing.expectEqual(@as(usize, (9 + 5) * 4), out.solid.items.len);
     for (out.solid.items) |v| {
-        const is_leaves = v.color >> 24 == @intFromEnum(block_mod.Tile.leaves);
+        const is_leaves = v.color >> 24 == @intFromEnum(Tile.leaves);
         try testing.expectEqual(is_leaves, v.data & solid_bit != 0);
     }
 }

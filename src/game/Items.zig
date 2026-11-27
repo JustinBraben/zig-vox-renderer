@@ -6,8 +6,8 @@ const Allocator = std.mem.Allocator;
 const block = @import("../world/block.zig");
 const Stack = block.Stack;
 const sprites = @import("../gfx/sprites.zig");
-const Player = @import("../player.zig");
-const Inventory = @import("inventory.zig");
+const Player = @import("../Player.zig");
+const Inventory = @import("Inventory.zig");
 
 const Pos = @Vector(3, f64);
 

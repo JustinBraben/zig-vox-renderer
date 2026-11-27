@@ -6,7 +6,7 @@ const std = @import("std");
 const sprites = @import("../gfx/sprites.zig");
 const Batch = sprites.Batch;
 const rgba = sprites.rgba;
-const Inventory = @import("../game/inventory.zig");
+const Inventory = @import("../game/Inventory.zig");
 const BlockId = @import("../world/block.zig").BlockId;
 
 pub const State = struct {

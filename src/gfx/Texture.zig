@@ -3,10 +3,10 @@
 const std = @import("std");
 const dvui = @import("dvui");
 
-const VulkanContext = @import("vulkan_context.zig");
+const VulkanContext = @import("VulkanContext.zig");
 const vk = VulkanContext.vk;
 const VkMemory = @import("dvui_vulkan_renderer").VkMemory;
-const Buffer = @import("buffer.zig");
+const Buffer = @import("Buffer.zig");
 
 const log = std.log.scoped(.vulkan);
 

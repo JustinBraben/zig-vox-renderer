@@ -1,6 +1,6 @@
 //! Overlay geometry built on the CPU every frame: textured or flat-colored triangles,
 //! either in camera-relative world space (dropped items, the crack on a block being
-//! broken) or in window pixels (the HUD). Drawn by overlay_pipeline.zig.
+//! broken) or in window pixels (the HUD). Drawn by OverlayPipeline.zig.
 
 const std = @import("std");
 const block = @import("../world/block.zig");

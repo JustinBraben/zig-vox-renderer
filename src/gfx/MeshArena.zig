@@ -8,18 +8,18 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const VulkanContext = @import("vulkan_context.zig");
+const VulkanContext = @import("VulkanContext.zig");
 const vk = VulkanContext.vk;
 const VkMemory = @import("dvui_vulkan_renderer").VkMemory;
-const Buffer = @import("buffer.zig");
+const Buffer = @import("Buffer.zig");
 const mesher = @import("../world/mesher.zig");
-const chunk = @import("../world/chunk.zig");
+const Chunk = @import("../world/Chunk.zig");
 
 pub const Vertex = mesher.Vertex;
-pub const Range = chunk.MeshRange;
+pub const Range = Chunk.MeshRange;
 
 /// Worst case for a 32³ chunk is a 3D checkerboard: half the blocks with 6 open faces.
-pub const max_quads_per_chunk = chunk.volume / 2 * 6;
+pub const max_quads_per_chunk = Chunk.volume / 2 * 6;
 
 /// Vertices one frame can upload (16 MiB of staging per frame in flight); more than
 /// the worst-case chunk.

@@ -10,9 +10,9 @@ const Allocator = std.mem.Allocator;
 const BlockId = @import("../world/block.zig").BlockId;
 const raycast = @import("../world/raycast.zig");
 const math = @import("../math.zig");
-const Player = @import("../player.zig");
-const Inventory = @import("inventory.zig");
-const Items = @import("items.zig");
+const Player = @import("../Player.zig");
+const Inventory = @import("Inventory.zig");
+const Items = @import("Items.zig");
 
 const Pos = @Vector(3, f64);
 
