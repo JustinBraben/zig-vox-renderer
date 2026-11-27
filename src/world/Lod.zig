@@ -19,7 +19,7 @@ const MeshArena = @import("../gfx/MeshArena.zig");
 const VoxelPipeline = @import("../gfx/VoxelPipeline.zig");
 const vk = @import("../gfx/VulkanContext.zig").vk;
 
-const Self = @This();
+const Lod = @This();
 
 pub const Config = struct {
     /// level of the root tiles, the coarsest one
@@ -72,11 +72,11 @@ vertices: std.ArrayList(mesher.Vertex) = .empty,
 pass: u64 = 0,
 stats: Stats = .{},
 
-pub fn init(allocator: Allocator, io: std.Io) Self {
+pub fn init(allocator: Allocator, io: std.Io) Lod {
     return .{ .allocator = allocator, .io = io };
 }
 
-pub fn deinit(self: *Self) void {
+pub fn deinit(self: *Lod) void {
     self.tiles.deinit(self.allocator);
     self.leaves.deinit(self.allocator);
     self.columns.deinit(self.allocator);
@@ -86,7 +86,7 @@ pub fn deinit(self: *Self) void {
 }
 
 /// Drops every tile; their mesh ranges are freed as of `frame`.
-pub fn clear(self: *Self, arena: *MeshArena, frame: u64) !void {
+pub fn clear(self: *Lod, arena: *MeshArena, frame: u64) !void {
     var it = self.tiles.valueIterator();
     while (it.next()) |tile| if (tile.mesh) |range| try arena.free(range, frame);
     self.tiles.clearRetainingCapacity();
@@ -147,7 +147,7 @@ fn children(key: Key) [4]Key {
     };
 }
 
-pub fn update(self: *Self, arena: *MeshArena, world: *const World, camera_pos: @Vector(3, f64), world_config: World.Config, config: Config, frame: u64) !void {
+pub fn update(self: *Lod, arena: *MeshArena, world: *const World, camera_pos: @Vector(3, f64), world_config: World.Config, config: Config, frame: u64) !void {
     const start = self.now();
     defer self.stats.update_ms = toMs(self.since(start));
     std.debug.assert(config.max_level >= 1);
@@ -195,7 +195,7 @@ pub fn update(self: *Self, arena: *MeshArena, world: *const World, camera_pos: @
 
 /// Marks the tile as used and either splits it or records it as a leaf.
 /// Tiles are only visited once built, except roots.
-fn visit(self: *Self, s: *const Selection, key: Key) !void {
+fn visit(self: *Lod, s: *const Selection, key: Key) !void {
     const tile = self.tiles.getPtr(key);
     if (tile) |t| t.used = self.pass;
     if (s.wantsSplit(key) and try self.childrenReady(s, key)) {
@@ -216,7 +216,7 @@ fn visit(self: *Self, s: *const Selection, key: Key) !void {
 }
 
 /// Whether every child can be drawn; queues the children that aren't built.
-fn childrenReady(self: *Self, s: *const Selection, key: Key) !bool {
+fn childrenReady(self: *Lod, s: *const Selection, key: Key) !bool {
     var ready = true;
     for (children(key)) |child| {
         if (key.level == 1) {
@@ -232,7 +232,7 @@ fn childrenReady(self: *Self, s: *const Selection, key: Key) !bool {
 }
 
 /// Returns false, building nothing, when this frame has no room left to upload the tile.
-fn build(self: *Self, arena: *MeshArena, terrain: *const Terrain, key: Key) !bool {
+fn build(self: *Lod, arena: *MeshArena, terrain: *const Terrain, key: Key) !bool {
     var cells: Grid = undefined;
     var blocks: Surface = undefined;
     sample(terrain, key, &cells, &blocks);
@@ -250,7 +250,7 @@ fn build(self: *Self, arena: *MeshArena, terrain: *const Terrain, key: Key) !boo
 }
 
 /// Records draws for every leaf in view. Expects `pipeline.bind` to have been called.
-pub fn draw(self: *Self, cmd: vk.CommandBuffer, pipeline: *const VoxelPipeline, camera_pos: @Vector(3, f64), frustum: ?math.Frustum) void {
+pub fn draw(self: *Lod, cmd: vk.CommandBuffer, pipeline: *const VoxelPipeline, camera_pos: @Vector(3, f64), frustum: ?math.Frustum) void {
     const start = self.now();
     var drawn: u32 = 0;
     var vertices: u64 = 0;
@@ -278,11 +278,11 @@ pub fn draw(self: *Self, cmd: vk.CommandBuffer, pipeline: *const VoxelPipeline, 
     self.stats.draw_ms = toMs(self.since(start));
 }
 
-fn now(self: *const Self) std.Io.Timestamp {
+fn now(self: *const Lod) std.Io.Timestamp {
     return .now(self.io, .awake);
 }
 
-fn since(self: *const Self, start: std.Io.Timestamp) u64 {
+fn since(self: *const Lod, start: std.Io.Timestamp) u64 {
     return @intCast(@max(start.untilNow(self.io, .awake).nanoseconds, 0));
 }
 

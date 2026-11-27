@@ -8,7 +8,7 @@ const VkMemory = @import("dvui_vulkan_renderer").VkMemory;
 
 const log = std.log.scoped(.vulkan);
 
-const Self = @This();
+const Buffer = @This();
 
 pub const MemoryKind = enum {
     /// host-visible + coherent, preferring device-local (ReBAR) memory when there is room
@@ -22,7 +22,7 @@ memory: vk.DeviceMemory,
 size: vk.DeviceSize,
 mapped: ?[*]u8 = null,
 
-pub fn init(device: vk.DeviceProxy, memory: VkMemory, size: vk.DeviceSize, usage: vk.BufferUsageFlags, kind: MemoryKind) !Self {
+pub fn init(device: vk.DeviceProxy, memory: VkMemory, size: vk.DeviceSize, usage: vk.BufferUsageFlags, kind: MemoryKind) !Buffer {
     const handle = try device.createBuffer(&.{
         .size = size,
         .usage = usage,
@@ -59,14 +59,14 @@ pub fn init(device: vk.DeviceProxy, memory: VkMemory, size: vk.DeviceSize, usage
     return .{ .device = device, .handle = handle, .memory = device_memory, .size = size, .mapped = mapped };
 }
 
-pub fn deinit(self: *Self) void {
+pub fn deinit(self: *Buffer) void {
     if (self.mapped != null) self.device.unmapMemory(self.memory);
     self.device.destroyBuffer(self.handle, null);
     self.device.freeMemory(self.memory, null);
 }
 
 /// The mapped memory viewed as a slice of `T`.
-pub fn slice(self: *const Self, comptime T: type) []T {
+pub fn slice(self: *const Buffer, comptime T: type) []T {
     const ptr: [*]T = @ptrCast(@alignCast(self.mapped.?));
     return ptr[0 .. self.size / @sizeOf(T)];
 }

@@ -10,7 +10,7 @@ const Buffer = @import("Buffer.zig");
 
 const log = std.log.scoped(.vulkan);
 
-const Self = @This();
+const Texture = @This();
 
 /// Images are stored as sRGB, so sampling returns linear colors.
 pub const format: vk.Format = .r8g8b8a8_srgb;
@@ -33,14 +33,14 @@ height: u32,
 
 /// Cubemap from six encoded images (PNG, JPG, ... anything stb_image reads) in
 /// Vulkan layer order: +X, -X, +Y, -Y, +Z, -Z. All faces must be the same square size.
-pub fn initCube(up: Uploader, faces: [6][]const u8) !Self {
+pub fn initCube(up: Uploader, faces: [6][]const u8) !Texture {
     return init(up, &faces, true);
 }
 
 /// 2D array from an encoded atlas of `tile`×`tile` tiles, one layer per tile, read left
 /// to right and top to bottom; only the first `count` tiles are used. Mipmapped down to
 /// 1×1 and sampled with nearest magnification, for pixel-art block textures.
-pub fn initAtlas(up: Uploader, encoded: []const u8, tile: u32, count: u32) !Self {
+pub fn initAtlas(up: Uploader, encoded: []const u8, tile: u32, count: u32) !Texture {
     std.debug.assert(std.math.isPowerOfTwo(tile));
     var atlas = try Decoded.init(encoded);
     defer atlas.deinit();
@@ -136,14 +136,14 @@ fn linearToSrgb(f: f32) u8 {
     return @intFromFloat(@round(std.math.clamp(s, 0, 1) * 255));
 }
 
-pub fn deinit(self: *Self) void {
+pub fn deinit(self: *Texture) void {
     self.device.destroySampler(self.sampler, null);
     self.device.destroyImageView(self.view, null);
     self.device.destroyImage(self.image, null);
     self.device.freeMemory(self.memory, null);
 }
 
-fn init(up: Uploader, layers: []const []const u8, cube: bool) !Self {
+fn init(up: Uploader, layers: []const []const u8, cube: bool) !Texture {
     const device = up.device;
 
     // decode each layer straight into the staging buffer, so only one decoded image is alive at a time
@@ -201,7 +201,7 @@ const CreateOptions = struct {
 
 /// Creates the image, fills it from `staging` with `regions` (which must cover every
 /// level and layer), and creates its view and sampler.
-fn create(up: Uploader, staging: vk.Buffer, regions: []const vk.BufferImageCopy, options: CreateOptions) !Self {
+fn create(up: Uploader, staging: vk.Buffer, regions: []const vk.BufferImageCopy, options: CreateOptions) !Texture {
     const device = up.device;
     const image = try device.createImage(&.{
         .flags = .{ .cube_compatible_bit = options.cube },

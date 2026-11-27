@@ -14,7 +14,7 @@ const Texture = @import("Texture.zig");
 const Assets = @import("../Assets.zig");
 const math = @import("../math.zig");
 
-const Self = @This();
+const VoxelPipeline = @This();
 
 /// std140 layout of `Scene` in voxel.vert/frag. Colors are linear.
 pub const Scene = extern struct {
@@ -54,7 +54,7 @@ scene_buffers: [max_frames]Buffer = undefined,
 descriptor_sets: [max_frames]vk.DescriptorSet = undefined,
 frame_count: usize,
 
-pub fn init(device: vk.DeviceProxy, memory: VkMemory, assets: *const Assets, sky: *const Texture, blocks: *const Texture, color_format: vk.Format, depth_format: vk.Format, frame_count: usize) !Self {
+pub fn init(device: vk.DeviceProxy, memory: VkMemory, assets: *const Assets, sky: *const Texture, blocks: *const Texture, color_format: vk.Format, depth_format: vk.Format, frame_count: usize) !VoxelPipeline {
     std.debug.assert(frame_count <= max_frames);
 
     const set_layout = try device.createDescriptorSetLayout(&.{
@@ -109,7 +109,7 @@ pub fn init(device: vk.DeviceProxy, memory: VkMemory, assets: *const Assets, sky
     }, null);
     errdefer device.destroyDescriptorPool(descriptor_pool, null);
 
-    var self: Self = .{
+    var self: VoxelPipeline = .{
         .device = device,
         .set_layout = set_layout,
         .descriptor_pool = descriptor_pool,
@@ -167,7 +167,7 @@ pub fn init(device: vk.DeviceProxy, memory: VkMemory, assets: *const Assets, sky
     return self;
 }
 
-pub fn deinit(self: *Self) void {
+pub fn deinit(self: *VoxelPipeline) void {
     for (self.scene_buffers[0..self.frame_count]) |*buffer| buffer.deinit();
     self.device.destroyDescriptorPool(self.descriptor_pool, null);
     for (self.pipelines.values) |pipeline| self.device.destroyPipeline(pipeline, null);
@@ -176,12 +176,12 @@ pub fn deinit(self: *Self) void {
 }
 
 /// Writes the scene uniforms for `frame` (whose previous use must have completed).
-pub fn setScene(self: *Self, frame: usize, scene: Scene) void {
+pub fn setScene(self: *VoxelPipeline, frame: usize, scene: Scene) void {
     self.scene_buffers[frame].slice(Scene)[0] = scene;
 }
 
 /// Binds everything shared by the chunk draws of `pass`. Expects to be inside a rendering scope.
-pub fn bind(self: *const Self, cmd: vk.CommandBuffer, frame: usize, extent: vk.Extent2D, arena: *const MeshArena, pass: Pass) void {
+pub fn bind(self: *const VoxelPipeline, cmd: vk.CommandBuffer, frame: usize, extent: vk.Extent2D, arena: *const MeshArena, pass: Pass) void {
     const device = self.device;
     device.cmdBindPipeline(cmd, .graphics, self.pipelines.get(pass));
     device.cmdSetViewport(cmd, 0, &.{.{
@@ -199,7 +199,7 @@ pub fn bind(self: *const Self, cmd: vk.CommandBuffer, frame: usize, extent: vk.E
 }
 
 /// `scale` is the size of a mesh unit in blocks: 1 for chunks, larger for distant terrain tiles.
-pub fn drawChunk(self: *const Self, cmd: vk.CommandBuffer, origin: math.Vec3, range: MeshArena.Range, scale: f32) void {
+pub fn drawChunk(self: *const VoxelPipeline, cmd: vk.CommandBuffer, origin: math.Vec3, range: MeshArena.Range, scale: f32) void {
     const push: PushConstants = .{ .origin = .{ origin[0], origin[1], origin[2], scale } };
     self.device.cmdPushConstants(cmd, self.layout, .{ .vertex_bit = true }, 0, @sizeOf(PushConstants), &push);
     self.device.cmdDrawIndexed(cmd, range.count / 4 * 6, 1, 0, @intCast(range.first), 0);

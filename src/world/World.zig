@@ -19,7 +19,7 @@ const vk = @import("../gfx/VulkanContext.zig").vk;
 
 const log = std.log.scoped(.world);
 
-const Self = @This();
+const World = @This();
 
 pub const Config = struct {
     /// horizontal radius in chunks (square)
@@ -204,7 +204,7 @@ const mesh_jobs_per_worker = 4;
 
 /// A world without workers, so chunks are generated and meshed on the main thread
 /// until `startWorkers`.
-pub fn init(allocator: Allocator, io: std.Io, seed: u64) !Self {
+pub fn init(allocator: Allocator, io: std.Io, seed: u64) !World {
     const light_queues = try allocator.create(light.Queues);
     light_queues.* = .{};
     errdefer allocator.destroy(light_queues);
@@ -230,7 +230,7 @@ pub const defaultWorkerCount = Pool.defaultWorkerCount;
 
 /// Saves the world in `saves` from now on, in the folder of its seed, and loads what
 /// was saved there. Expects no chunks to be loaded yet.
-pub fn openSave(self: *Self, saves: std.Io.Dir) !void {
+pub fn openSave(self: *World, saves: std.Io.Dir) !void {
     const save: Save = try .open(self.io, self.allocator, saves, self.terrain.seed);
     self.save.deinit();
     self.save = save;
@@ -238,7 +238,7 @@ pub fn openSave(self: *Self, saves: std.Io.Dir) !void {
 }
 
 /// Writes every edited chunk to the save.
-pub fn saveAll(self: *Self) !void {
+pub fn saveAll(self: *World) !void {
     var it = self.chunks.valueIterator();
     while (it.next()) |entry| {
         const c = entry.*;
@@ -250,20 +250,20 @@ pub fn saveAll(self: *Self) !void {
 }
 
 /// The player as saved with the world, if it was.
-pub fn savedPlayer(self: *Self) ?Save.Player {
+pub fn savedPlayer(self: *World) ?Save.Player {
     return self.save.readPlayer();
 }
 
-pub fn savePlayer(self: *Self, player: Save.Player) !void {
+pub fn savePlayer(self: *World, player: Save.Player) !void {
     try self.save.writePlayer(player);
 }
 
-pub fn startWorkers(self: *Self, count: usize) void {
+pub fn startWorkers(self: *World, count: usize) void {
     self.pool.start(count);
     self.stats.workers = @intCast(self.pool.workers);
 }
 
-pub fn deinit(self: *Self) void {
+pub fn deinit(self: *World) void {
     // stop the workers before freeing what they work on
     self.pool.deinit();
     self.allocator.destroy(self.pool);
@@ -305,7 +305,7 @@ pub fn deinit(self: *Self) void {
 }
 
 /// Switches how leaves are meshed; loaded chunks are remeshed over the next frames.
-pub fn setFastLeaves(self: *Self, fast: bool) void {
+pub fn setFastLeaves(self: *World, fast: bool) void {
     if (self.mesh_options.fast_leaves == fast) return;
     self.mesh_options.fast_leaves = fast;
     var it = self.chunks.valueIterator();
@@ -317,7 +317,7 @@ pub fn setFastLeaves(self: *Self, fast: bool) void {
 
 /// Saves the edits, then drops every chunk to generate the world of `seed` (and load
 /// its edits); their mesh ranges are freed as of `frame`.
-pub fn regenerate(self: *Self, arena: *MeshArena, seed: u64, frame: u64) !void {
+pub fn regenerate(self: *World, arena: *MeshArena, seed: u64, frame: u64) !void {
     try self.saveAll();
     if (seed != self.terrain.seed) {
         const save: Save = if (self.saves_dir) |saves| try .open(self.io, self.allocator, saves, seed) else .memory(self.io, self.allocator);
@@ -344,14 +344,14 @@ pub fn regenerate(self: *Self, arena: *MeshArena, seed: u64, frame: u64) !void {
 }
 
 /// The block at world position (x, y, z), or null when its chunk isn't loaded.
-pub fn getBlock(self: *const Self, x: i32, y: i32, z: i32) ?BlockId {
+pub fn getBlock(self: *const World, x: i32, y: i32, z: i32) ?BlockId {
     const c = self.chunks.get(Chunk.Pos.fromBlock(x, y, z)) orelse return null;
     const l = local(x, y, z);
     return c.get(l[0], l[1], l[2]);
 }
 
 /// Packed light (see light.zig) at world position (x, y, z), or null when its chunk isn't loaded.
-pub fn getLight(self: *const Self, x: i32, y: i32, z: i32) ?u8 {
+pub fn getLight(self: *const World, x: i32, y: i32, z: i32) ?u8 {
     const c = self.chunks.get(Chunk.Pos.fromBlock(x, y, z)) orelse return null;
     const l = local(x, y, z);
     return c.getLight(Chunk.index(l[0], l[1], l[2]));
@@ -359,21 +359,21 @@ pub fn getLight(self: *const Self, x: i32, y: i32, z: i32) ?u8 {
 
 /// Whether the block blocks movement. Falls back to the generated terrain where no
 /// chunk is loaded, so the edge of the loaded area is neither a wall nor a pit.
-pub fn isSolid(self: *const Self, x: i32, y: i32, z: i32) bool {
+pub fn isSolid(self: *const World, x: i32, y: i32, z: i32) bool {
     return self.blockOrTerrain(x, y, z).isSolid();
 }
 
-pub fn isWater(self: *const Self, x: i32, y: i32, z: i32) bool {
+pub fn isWater(self: *const World, x: i32, y: i32, z: i32) bool {
     return self.blockOrTerrain(x, y, z) == .water;
 }
 
-fn blockOrTerrain(self: *const Self, x: i32, y: i32, z: i32) BlockId {
+fn blockOrTerrain(self: *const World, x: i32, y: i32, z: i32) BlockId {
     return self.getBlock(x, y, z) orelse self.terrain.block(x, y, z);
 }
 
 /// Changes one block and queues remeshing of its chunk and of every neighbor whose
 /// one-block border (faces + AO) contains it. Does nothing if the chunk isn't loaded.
-pub fn setBlock(self: *Self, x: i32, y: i32, z: i32, block: BlockId) !void {
+pub fn setBlock(self: *World, x: i32, y: i32, z: i32, block: BlockId) !void {
     const pos = Chunk.Pos.fromBlock(x, y, z);
     const c = self.chunks.get(pos) orelse return;
     const l = local(x, y, z);
@@ -408,7 +408,7 @@ fn local(x: i32, y: i32, z: i32) [3]usize {
     return .{ @intCast(@mod(x, Chunk.size)), @intCast(@mod(y, Chunk.size)), @intCast(@mod(z, Chunk.size)) };
 }
 
-pub fn update(self: *Self, arena: *MeshArena, camera_pos: @Vector(3, f64), config: Config, frame: u64) !void {
+pub fn update(self: *World, arena: *MeshArena, camera_pos: @Vector(3, f64), config: Config, frame: u64) !void {
     const start = self.now();
     var gen_ns: u64 = 0;
     var mesh_ns: u64 = 0;
@@ -539,7 +539,7 @@ pub fn update(self: *Self, arena: *MeshArena, camera_pos: @Vector(3, f64), confi
 }
 
 /// Whether column (x, z) misses a chunk in the generated y range.
-fn columnMissing(self: *const Self, column: [2]i32, config: Config) bool {
+fn columnMissing(self: *const World, column: [2]i32, config: Config) bool {
     var y = config.min_y - 1;
     while (y <= config.max_y + 1) : (y += 1) {
         if (!self.chunks.contains(.{ .x = column[0], .y = y, .z = column[1] })) return true;
@@ -548,7 +548,7 @@ fn columnMissing(self: *const Self, column: [2]i32, config: Config) bool {
 }
 
 /// Starts generating a column on the workers.
-fn submitColumn(self: *Self, column: [2]i32, config: Config) !void {
+fn submitColumn(self: *World, column: [2]i32, config: Config) !void {
     const job = if (self.free_gen_jobs.pop()) |job| job else blk: {
         try self.gen_jobs.ensureUnusedCapacity(self.allocator, 1);
         try self.free_gen_jobs.ensureTotalCapacity(self.allocator, self.gen_jobs.items.len + 1);
@@ -577,7 +577,7 @@ fn submitColumn(self: *Self, column: [2]i32, config: Config) !void {
     self.gen_in_flight += 1;
 }
 
-fn releaseGenJob(self: *Self, job: *GenJob) void {
+fn releaseGenJob(self: *World, job: *GenJob) void {
     job.freeChunks(self.allocator);
     // the list has room for every job
     self.free_gen_jobs.appendAssumeCapacity(job);
@@ -585,7 +585,7 @@ fn releaseGenJob(self: *Self, job: *GenJob) void {
 
 /// Starts meshing chunk `c` on the workers; `urgent` ones go first. Buried chunks get
 /// an empty mesh right away.
-fn submitMesh(self: *Self, arena: *MeshArena, c: *Chunk, frame: u64, urgent: bool) !void {
+fn submitMesh(self: *World, arena: *MeshArena, c: *Chunk, frame: u64, urgent: bool) !void {
     if (self.buried(c)) {
         self.stats.mesh_skipped += 1;
         try freeMeshes(arena, c, frame);
@@ -617,7 +617,7 @@ fn submitMesh(self: *Self, arena: *MeshArena, c: *Chunk, frame: u64, urgent: boo
 
 /// Takes in the jobs the workers finished: uploads meshes, and queues generated
 /// columns in `ready_columns`.
-fn collect(self: *Self, arena: *MeshArena, frame: u64) !void {
+fn collect(self: *World, arena: *MeshArena, frame: u64) !void {
     // appended to the meshes the last frame had no room to upload
     try self.pool.poll(&self.finished_jobs);
     const finished = self.finished_jobs.items;
@@ -661,7 +661,7 @@ fn collect(self: *Self, arena: *MeshArena, frame: u64) !void {
 
 /// Queues a generated column for `addColumn`, unless it was generated before a
 /// `regenerate`.
-fn takeColumn(self: *Self, job: *GenJob) !void {
+fn takeColumn(self: *World, job: *GenJob) !void {
     self.gen_in_flight -= 1;
     if (job.epoch != self.epoch) {
         self.releaseGenJob(job);
@@ -678,7 +678,7 @@ fn takeColumn(self: *Self, job: *GenJob) !void {
 
 /// Adds the chunks of a generated column to the world, top down, unless it went out
 /// of range meanwhile, and returns how many were added.
-fn addColumn(self: *Self, job: *GenJob, center: Chunk.Pos, r: i32, config: Config) !u32 {
+fn addColumn(self: *World, job: *GenJob, center: Chunk.Pos, r: i32, config: Config) !u32 {
     defer self.releaseGenJob(job);
     _ = self.columns_in_flight.remove(job.column);
     if (@abs(job.column[0] - center.x) > r + 2 or @abs(job.column[1] - center.z) > r + 2) return 0;
@@ -721,7 +721,7 @@ fn addColumn(self: *Self, job: *GenJob, center: Chunk.Pos, r: i32, config: Confi
 
 /// Whether every chunk of column (x, z) in the configured y range has a mesh
 /// (possibly empty, possibly being rebuilt), so the column can be drawn without holes.
-pub fn columnReady(self: *const Self, x: i32, z: i32, config: Config) bool {
+pub fn columnReady(self: *const World, x: i32, z: i32, config: Config) bool {
     var y = config.min_y;
     while (y <= config.max_y) : (y += 1) {
         const c = self.chunks.get(.{ .x = x, .y = y, .z = z }) orelse return false;
@@ -733,7 +733,7 @@ pub fn columnReady(self: *const Self, x: i32, z: i32, config: Config) bool {
 /// Records draws for the solid mesh of every chunk in view, limited to `columns` when
 /// given (the rest is covered by distant terrain), and collects the translucent meshes
 /// for `drawTranslucent`. Expects `pipeline.bind(..., .solid)` to have been called.
-pub fn draw(self: *Self, cmd: vk.CommandBuffer, pipeline: *const VoxelPipeline, camera_pos: @Vector(3, f64), frustum: ?math.Frustum, config: Config, columns: ?*const ColumnSet) void {
+pub fn draw(self: *World, cmd: vk.CommandBuffer, pipeline: *const VoxelPipeline, camera_pos: @Vector(3, f64), frustum: ?math.Frustum, config: Config, columns: ?*const ColumnSet) void {
     const start = self.now();
     const center = Chunk.Pos.fromWorld(camera_pos);
     const r = @max(config.render_distance, 0);
@@ -783,15 +783,15 @@ pub fn draw(self: *Self, cmd: vk.CommandBuffer, pipeline: *const VoxelPipeline, 
 
 /// Records the translucent meshes collected by the last `draw`. Expects
 /// `pipeline.bind(..., .translucent)` to have been called.
-pub fn drawTranslucent(self: *const Self, cmd: vk.CommandBuffer, pipeline: *const VoxelPipeline) void {
+pub fn drawTranslucent(self: *const World, cmd: vk.CommandBuffer, pipeline: *const VoxelPipeline) void {
     for (self.translucent_draws.items) |d| pipeline.drawChunk(cmd, d.origin, d.range, 1);
 }
 
-fn now(self: *const Self) std.Io.Timestamp {
+fn now(self: *const World) std.Io.Timestamp {
     return .now(self.io, .awake);
 }
 
-fn since(self: *const Self, start: std.Io.Timestamp) u64 {
+fn since(self: *const World, start: std.Io.Timestamp) u64 {
     return @intCast(@max(start.untilNow(self.io, .awake).nanoseconds, 0));
 }
 
@@ -799,7 +799,7 @@ fn toMs(ns: u64) f32 {
     return @floatCast(@as(f64, @floatFromInt(ns)) / std.time.ns_per_ms);
 }
 
-fn buildOffsets(self: *Self, r: i32) !void {
+fn buildOffsets(self: *World, r: i32) !void {
     self.offsets.clearRetainingCapacity();
     const extent = r + 2;
     var z = -extent;
@@ -815,7 +815,7 @@ fn buildOffsets(self: *Self, r: i32) !void {
     self.offsets_radius = r;
 }
 
-fn unloadFar(self: *Self, arena: *MeshArena, center: Chunk.Pos, r: i32, config: Config, frame: u64) !void {
+fn unloadFar(self: *World, arena: *MeshArena, center: Chunk.Pos, r: i32, config: Config, frame: u64) !void {
     self.scratch_keys.clearRetainingCapacity();
     var it = self.chunks.iterator();
     while (it.next()) |entry| {
@@ -849,14 +849,14 @@ fn unloadFar(self: *Self, arena: *MeshArena, center: Chunk.Pos, r: i32, config: 
     self.worm_cache.retain(.{ center.x, center.z }, r + 2 + worms.reach / Chunk.size + 2);
 }
 
-fn clearHeightmaps(self: *Self) void {
+fn clearHeightmaps(self: *World) void {
     var it = self.heightmaps.valueIterator();
     while (it.next()) |map| self.allocator.destroy(map.*);
     self.heightmaps.clearRetainingCapacity();
 }
 
 /// The column's heightmap, computed on first use.
-fn heightmap(self: *Self, x: i32, z: i32) !*const Terrain.Heightmap {
+fn heightmap(self: *World, x: i32, z: i32) !*const Terrain.Heightmap {
     if (self.heightmaps.get(.{ x, z })) |map| return map;
     const map = try self.allocator.create(Terrain.Heightmap);
     errdefer self.allocator.destroy(map);
@@ -867,7 +867,7 @@ fn heightmap(self: *Self, x: i32, z: i32) !*const Terrain.Heightmap {
 
 /// Generates and lights one chunk on the calling thread (the workers generate whole
 /// columns; see `GenJob`).
-fn generateChunk(self: *Self, pos: Chunk.Pos) !void {
+fn generateChunk(self: *World, pos: Chunk.Pos) !void {
     const map = try self.heightmap(pos.x, pos.z);
     const c = try buildChunk(self.allocator, self.terrain, pos, map, try self.save.load(self.allocator, pos));
     errdefer self.destroyChunk(c);
@@ -929,7 +929,7 @@ fn freeMeshes(arena: *MeshArena, c: *Chunk, frame: u64) !void {
     c.translucent_mesh = null;
 }
 
-fn destroyChunk(self: *Self, c: *Chunk) void {
+fn destroyChunk(self: *World, c: *Chunk) void {
     freeChunk(self.allocator, c);
 }
 
@@ -939,7 +939,7 @@ fn freeChunk(allocator: Allocator, c: *Chunk) void {
     allocator.destroy(c);
 }
 
-fn neighborsLoaded(self: *const Self, pos: Chunk.Pos) bool {
+fn neighborsLoaded(self: *const World, pos: Chunk.Pos) bool {
     var dy: i32 = -1;
     while (dy <= 1) : (dy += 1) {
         var dz: i32 = -1;
@@ -955,7 +955,7 @@ fn neighborsLoaded(self: *const Self, pos: Chunk.Pos) bool {
 
 /// True when no face of the chunk can be visible: every block in it is opaque (rock,
 /// maybe with ore inside) and each face neighbor's side touching it is solid.
-fn buried(self: *const Self, c: *const Chunk) bool {
+fn buried(self: *const World, c: *const Chunk) bool {
     if (!c.all_opaque) return false;
     // same side order as `Chunk.solid_sides`; side ^ 1 is the opposite side
     const neighbors = [6][3]i32{ .{ 1, 0, 0 }, .{ -1, 0, 0 }, .{ 0, 1, 0 }, .{ 0, -1, 0 }, .{ 0, 0, 1 }, .{ 0, 0, -1 } };
@@ -967,7 +967,7 @@ fn buried(self: *const Self, c: *const Chunk) bool {
 }
 
 /// Null when there is nothing to upload or the arena is full.
-fn upload(self: *Self, arena: *MeshArena, vertices: []const mesher.Vertex) !?Chunk.MeshRange {
+fn upload(self: *World, arena: *MeshArena, vertices: []const mesher.Vertex) !?Chunk.MeshRange {
     if (vertices.len == 0) return null;
     const range = try arena.upload(vertices);
     if (range == null and !self.stats.arena_full) {
@@ -979,7 +979,7 @@ fn upload(self: *Self, arena: *MeshArena, vertices: []const mesher.Vertex) !?Chu
 
 /// Copies the blocks and light of the chunk and a one-block border of its 26 neighbors
 /// into `padded` and `padded_light`.
-fn fillPadded(self: *const Self, pos: Chunk.Pos, padded: *mesher.Padded, padded_light: *mesher.PaddedLight) void {
+fn fillPadded(self: *const World, pos: Chunk.Pos, padded: *mesher.Padded, padded_light: *mesher.PaddedLight) void {
     var neighbors: [3][3][3]?*const Chunk = undefined;
     for (0..3) |y| {
         for (0..3) |z| {
@@ -1029,13 +1029,13 @@ fn fillPadded(self: *const Self, pos: Chunk.Pos, padded: *mesher.Padded, padded_
 const testing = std.testing;
 
 /// A world with chunks x, z in [-1, 1] and y in [-1, 3] generated, top down as `update` does.
-fn testWorld() !Self {
+fn testWorld() !World {
     return testWorldAround(0, 0);
 }
 
 /// As `testWorld`, around chunk column (x, z).
-fn testWorldAround(x: i32, z: i32) !Self {
-    var world = try Self.init(testing.allocator, testing.io, 7);
+fn testWorldAround(x: i32, z: i32) !World {
+    var world = try World.init(testing.allocator, testing.io, 7);
     errdefer world.deinit();
     var cx: i32 = x - 1;
     while (cx <= x + 1) : (cx += 1) {
@@ -1048,17 +1048,17 @@ fn testWorldAround(x: i32, z: i32) !Self {
     return world;
 }
 
-fn sky(world: *const Self, x: i32, y: i32, z: i32) u4 {
+fn sky(world: *const World, x: i32, y: i32, z: i32) u4 {
     return light.level(world.getLight(x, y, z).?, .sky);
 }
 
-fn blockLight(world: *const Self, x: i32, y: i32, z: i32) u4 {
+fn blockLight(world: *const World, x: i32, y: i32, z: i32) u4 {
     return light.level(world.getLight(x, y, z).?, .block);
 }
 
 /// A column inside chunk (0, 0) with open sky at least 12 blocks above dry ground,
 /// below the generated height range.
-fn openColumn(world: *const Self) [3]i32 {
+fn openColumn(world: *const World) [3]i32 {
     var x: i32 = 6;
     while (x < 26) : (x += 1) {
         var z: i32 = 6;
@@ -1119,7 +1119,7 @@ test "light is the same whichever chunk loads first" {
     // the heightmap estimate and the exchange between neighbors
     var a = try testWorld();
     defer a.deinit();
-    var b = try Self.init(testing.allocator, testing.io, 7);
+    var b = try World.init(testing.allocator, testing.io, 7);
     defer b.deinit();
     var cy: i32 = -1;
     while (cy <= 3) : (cy += 1) {
@@ -1159,7 +1159,7 @@ test "sky light fades with depth under water" {
 }
 
 /// Generates the chunks of `testWorld` as `update` does: in columns, on 2 workers.
-fn generateOnWorkers(world: *Self) !void {
+fn generateOnWorkers(world: *World) !void {
     world.startWorkers(2);
     // the y range of `testWorld`
     const config: Config = .{ .render_distance = 1, .min_y = 0, .max_y = 2, .gen_budget = 1000, .mesh_budget = 0 };
@@ -1181,7 +1181,7 @@ fn generateOnWorkers(world: *Self) !void {
 test "columns generated on the workers are lit like chunks generated one by one" {
     var a = try testWorld();
     defer a.deinit();
-    var b = try Self.init(testing.allocator, testing.io, 7);
+    var b = try World.init(testing.allocator, testing.io, 7);
     defer b.deinit();
     try generateOnWorkers(&b);
     try testing.expectEqual(a.chunks.count(), b.chunks.count());
@@ -1210,7 +1210,7 @@ test "edits are saved and come back, lit, when the world is loaded again" {
         try world.setBlock(x, h + 4, z, .planks);
         try world.saveAll();
     }
-    var world = try Self.init(testing.allocator, testing.io, 7);
+    var world = try World.init(testing.allocator, testing.io, 7);
     defer world.deinit();
     try world.openSave(tmp.dir);
     try generateOnWorkers(&world);

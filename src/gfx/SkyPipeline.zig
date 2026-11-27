@@ -12,7 +12,7 @@ const Camera = @import("../Camera.zig");
 const math = @import("../math.zig");
 const Assets = @import("../Assets.zig");
 
-const Self = @This();
+const SkyPipeline = @This();
 
 /// Camera basis scaled for reconstructing view rays; see sky.vert.
 pub const PushConstants = extern struct {
@@ -25,7 +25,7 @@ device: vk.DeviceProxy,
 layout: vk.PipelineLayout,
 pipeline: vk.Pipeline,
 
-pub fn init(device: vk.DeviceProxy, assets: *const Assets, voxel: *const VoxelPipeline, color_format: vk.Format, depth_format: vk.Format) !Self {
+pub fn init(device: vk.DeviceProxy, assets: *const Assets, voxel: *const VoxelPipeline, color_format: vk.Format, depth_format: vk.Format) !SkyPipeline {
     const layout = try device.createPipelineLayout(&.{
         .set_layout_count = 1,
         .p_set_layouts = &.{voxel.set_layout},
@@ -48,14 +48,14 @@ pub fn init(device: vk.DeviceProxy, assets: *const Assets, voxel: *const VoxelPi
     return .{ .device = device, .layout = layout, .pipeline = pipeline };
 }
 
-pub fn deinit(self: *Self) void {
+pub fn deinit(self: *SkyPipeline) void {
     self.device.destroyPipeline(self.pipeline, null);
     self.device.destroyPipelineLayout(self.layout, null);
 }
 
 /// Draws the sky behind everything already rendered. Viewport and scissor are
 /// expected to be set already (`VoxelPipeline.bind` does that).
-pub fn draw(self: *const Self, cmd: vk.CommandBuffer, voxel: *const VoxelPipeline, frame: usize, camera: *const Camera, fov_deg: f32, aspect: f32) void {
+pub fn draw(self: *const SkyPipeline, cmd: vk.CommandBuffer, voxel: *const VoxelPipeline, frame: usize, camera: *const Camera, fov_deg: f32, aspect: f32) void {
     const forward = camera.forward();
     const right = camera.right();
     const up = math.cross(right, forward);

@@ -22,7 +22,7 @@ const Inventory = @import("../game/Inventory.zig");
 
 const log = std.log.scoped(.save);
 
-const Self = @This();
+const Save = @This();
 
 /// Chunk columns per region side.
 pub const region_size = 16;
@@ -63,12 +63,12 @@ chunks: std.AutoHashMapUnmanaged(Chunk.Pos, []u8) = .empty,
 regions: std.AutoHashMapUnmanaged([2]i32, Region) = .empty,
 
 /// A save that keeps everything in memory.
-pub fn memory(io: Io, allocator: Allocator) Self {
+pub fn memory(io: Io, allocator: Allocator) Save {
     return .{ .io = io, .allocator = allocator };
 }
 
 /// Opens (creating it when needed) the world of `seed` inside `saves`.
-pub fn open(io: Io, allocator: Allocator, saves: Io.Dir, seed: u64) !Self {
+pub fn open(io: Io, allocator: Allocator, saves: Io.Dir, seed: u64) !Save {
     var buf: [32]u8 = undefined;
     const name = try std.fmt.bufPrint(&buf, "world-{d}", .{seed});
     try saves.createDirPath(io, name);
@@ -76,7 +76,7 @@ pub fn open(io: Io, allocator: Allocator, saves: Io.Dir, seed: u64) !Self {
     return .{ .io = io, .allocator = allocator, .dir = dir };
 }
 
-pub fn deinit(self: *Self) void {
+pub fn deinit(self: *Save) void {
     var it = self.chunks.valueIterator();
     while (it.next()) |data| self.allocator.free(data.*);
     self.chunks.deinit(self.allocator);
@@ -90,7 +90,7 @@ pub fn regionOf(pos: Chunk.Pos) [2]i32 {
 
 /// The saved blocks of the chunk at `pos`, or null when it isn't saved. Free the
 /// result with `allocator`.
-pub fn load(self: *Self, allocator: Allocator, pos: Chunk.Pos) !?*Chunk.Blocks {
+pub fn load(self: *Save, allocator: Allocator, pos: Chunk.Pos) !?*Chunk.Blocks {
     try self.readRegion(regionOf(pos));
     const data = self.chunks.get(pos) orelse return null;
     const blocks = try allocator.create(Chunk.Blocks);
@@ -105,7 +105,7 @@ pub fn load(self: *Self, allocator: Allocator, pos: Chunk.Pos) !?*Chunk.Blocks {
 
 /// Saves the blocks of the chunk at `pos` (`uniform` when `blocks` is null), to be
 /// written by the next `flush`.
-pub fn store(self: *Self, pos: Chunk.Pos, blocks: ?*const Chunk.Blocks, uniform: BlockId) !void {
+pub fn store(self: *Save, pos: Chunk.Pos, blocks: ?*const Chunk.Blocks, uniform: BlockId) !void {
     const region = regionOf(pos);
     try self.readRegion(region);
     const data = try encode(self.allocator, blocks, uniform);
@@ -117,7 +117,7 @@ pub fn store(self: *Self, pos: Chunk.Pos, blocks: ?*const Chunk.Blocks, uniform:
 }
 
 /// Writes every region that changed.
-pub fn flush(self: *Self) !void {
+pub fn flush(self: *Save) !void {
     const dir = self.dir orelse return;
     var data: std.ArrayList(u8) = .empty;
     defer data.deinit(self.allocator);
@@ -134,7 +134,7 @@ pub fn flush(self: *Self) !void {
     }
 }
 
-pub fn writePlayer(self: *Self, player: Player) !void {
+pub fn writePlayer(self: *Save, player: Player) !void {
     const dir = self.dir orelse return;
     var data: [player_magic.len + 4 + 3 * 8 + 4 * 3 + 4 + 2 * Inventory.size]u8 = undefined;
     var w: Writer = .{ .buf = &data };
@@ -157,7 +157,7 @@ pub fn writePlayer(self: *Self, player: Player) !void {
 }
 
 /// The player as last written, or null when there is none (or it can't be read).
-pub fn readPlayer(self: *Self) ?Player {
+pub fn readPlayer(self: *Save) ?Player {
     const dir = self.dir orelse return null;
     var buf: [128]u8 = undefined;
     const data = dir.readFile(self.io, "player.dat", &buf) catch return null;
@@ -193,7 +193,7 @@ fn readPlayerData(r: *Reader) !Player {
 }
 
 /// Reads a region file the first time one of its chunks is asked for.
-fn readRegion(self: *Self, region: [2]i32) !void {
+fn readRegion(self: *Save, region: [2]i32) !void {
     const entry = try self.regions.getOrPut(self.allocator, region);
     if (entry.found_existing) return;
     entry.value_ptr.* = .{};
@@ -215,7 +215,7 @@ fn readRegion(self: *Self, region: [2]i32) !void {
     };
 }
 
-fn decodeRegion(self: *Self, data: []const u8) !void {
+fn decodeRegion(self: *Save, data: []const u8) !void {
     var r: Reader = .{ .data = data };
     if (!std.mem.eql(u8, try r.bytes(region_magic.len), region_magic)) return error.BadMagic;
     if (try r.int(u32) != region_version) return error.UnsupportedVersion;
@@ -231,7 +231,7 @@ fn decodeRegion(self: *Self, data: []const u8) !void {
     }
 }
 
-fn encodeRegion(self: *const Self, region: [2]i32, out: *std.ArrayList(u8)) !void {
+fn encodeRegion(self: *const Save, region: [2]i32, out: *std.ArrayList(u8)) !void {
     try out.appendSlice(self.allocator, region_magic);
     try appendInt(self.allocator, out, u32, region_version);
     const count_at = out.items.len;
