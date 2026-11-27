@@ -1,7 +1,7 @@
 //! The player's hotbar: `size` slots of stacked blocks, one of them selected.
 
 const std = @import("std");
-const block = @import("../world/block.zig");
+const block = @import("../world.zig").block;
 const BlockId = block.BlockId;
 const Stack = block.Stack;
 

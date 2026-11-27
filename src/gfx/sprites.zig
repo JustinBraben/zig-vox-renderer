@@ -3,7 +3,7 @@
 //! broken) or in window pixels (the HUD). Drawn by OverlayPipeline.zig.
 
 const std = @import("std");
-const block = @import("../world/block.zig");
+const block = @import("../world.zig").block;
 const BlockId = block.BlockId;
 const Tile = block.Tile;
 

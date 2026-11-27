@@ -18,7 +18,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const Chunk = @import("Chunk.zig");
 const BlockId = @import("block.zig").BlockId;
-const Inventory = @import("../game/Inventory.zig");
+const Inventory = @import("../game.zig").Inventory;
 
 const log = std.log.scoped(.save);
 

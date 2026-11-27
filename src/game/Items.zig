@@ -3,9 +3,9 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const block = @import("../world/block.zig");
+const block = @import("../world.zig").block;
 const Stack = block.Stack;
-const sprites = @import("../gfx/sprites.zig");
+const sprites = @import("../gfx.zig").sprites;
 const Player = @import("../Player.zig");
 const Inventory = @import("Inventory.zig");
 

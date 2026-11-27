@@ -5,13 +5,13 @@ const dvui = @import("dvui");
 
 const Settings = @import("../Settings.zig");
 const Camera = @import("../Camera.zig");
-const World = @import("../world/World.zig");
-const Lod = @import("../world/Lod.zig");
-const Chunk = @import("../world/Chunk.zig");
-const BlockId = @import("../world/block.zig").BlockId;
-const raycast = @import("../world/raycast.zig");
+const World = @import("../world.zig").World;
+const Lod = @import("../world.zig").Lod;
+const Chunk = @import("../world.zig").Chunk;
+const BlockId = @import("../world.zig").BlockId;
+const raycast = @import("../world.zig").raycast;
 const Player = @import("../Player.zig");
-const Game = @import("../game/Game.zig");
+const Game = @import("../game.zig").Game;
 
 pub const Stats = struct {
     frame_ms: f32,

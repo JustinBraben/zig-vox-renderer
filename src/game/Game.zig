@@ -7,8 +7,8 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const BlockId = @import("../world/block.zig").BlockId;
-const raycast = @import("../world/raycast.zig");
+const BlockId = @import("../world.zig").BlockId;
+const raycast = @import("../world.zig").raycast;
 const math = @import("../math.zig");
 const Player = @import("../Player.zig");
 const Inventory = @import("Inventory.zig");

@@ -15,9 +15,9 @@ const mesher = @import("mesher.zig");
 const Terrain = @import("Terrain.zig");
 const World = @import("World.zig");
 const math = @import("../math.zig");
-const MeshArena = @import("../gfx/MeshArena.zig");
-const VoxelPipeline = @import("../gfx/VoxelPipeline.zig");
-const vk = @import("../gfx/VulkanContext.zig").vk;
+const MeshArena = @import("../gfx.zig").MeshArena;
+const VoxelPipeline = @import("../gfx.zig").VoxelPipeline;
+const vk = @import("../gfx.zig").vk;
 
 const Lod = @This();
 

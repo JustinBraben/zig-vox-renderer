@@ -12,8 +12,8 @@ const VulkanContext = @import("VulkanContext.zig");
 const vk = VulkanContext.vk;
 const VkMemory = @import("dvui_vulkan_renderer").VkMemory;
 const Buffer = @import("Buffer.zig");
-const mesher = @import("../world/mesher.zig");
-const Chunk = @import("../world/Chunk.zig");
+const mesher = @import("../world.zig").mesher;
+const Chunk = @import("../world.zig").Chunk;
 
 pub const Vertex = mesher.Vertex;
 pub const Range = Chunk.MeshRange;
