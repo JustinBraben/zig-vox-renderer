@@ -2,11 +2,11 @@
 
 const std = @import("std");
 
-const VulkanContext = @import("vulkan_context.zig");
+const VulkanContext = @import("VulkanContext.zig");
 const vk = VulkanContext.vk;
 const VkMemory = @import("dvui_vulkan_renderer").VkMemory;
 
-const Self = @This();
+const DepthBuffer = @This();
 
 pub const format: vk.Format = .d32_sfloat;
 
@@ -24,23 +24,23 @@ image: vk.Image = .null_handle,
 memory: vk.DeviceMemory = .null_handle,
 view: vk.ImageView = .null_handle,
 
-pub fn init(device: vk.DeviceProxy, memory_types: VkMemory, extent: vk.Extent2D) !Self {
-    var self: Self = .{ .device = device, .memory_types = memory_types };
+pub fn init(device: vk.DeviceProxy, memory_types: VkMemory, extent: vk.Extent2D) !DepthBuffer {
+    var self: DepthBuffer = .{ .device = device, .memory_types = memory_types };
     try self.create(extent);
     return self;
 }
 
-pub fn deinit(self: *Self) void {
+pub fn deinit(self: *DepthBuffer) void {
     self.destroy();
 }
 
 /// Caller must make sure the GPU is no longer using the old image.
-pub fn recreate(self: *Self, extent: vk.Extent2D) !void {
+pub fn recreate(self: *DepthBuffer, extent: vk.Extent2D) !void {
     self.destroy();
     try self.create(extent);
 }
 
-fn create(self: *Self, extent: vk.Extent2D) !void {
+fn create(self: *DepthBuffer, extent: vk.Extent2D) !void {
     const device = self.device;
     self.image = try device.createImage(&.{
         .image_type = .@"2d",
@@ -73,7 +73,7 @@ fn create(self: *Self, extent: vk.Extent2D) !void {
     }, null);
 }
 
-fn destroy(self: *Self) void {
+fn destroy(self: *DepthBuffer) void {
     if (self.view != .null_handle) self.device.destroyImageView(self.view, null);
     if (self.image != .null_handle) self.device.destroyImage(self.image, null);
     if (self.memory != .null_handle) self.device.freeMemory(self.memory, null);
@@ -83,7 +83,7 @@ fn destroy(self: *Self) void {
 }
 
 /// Discards the previous contents and prepares the image for depth writes.
-pub fn transition(self: *const Self, cmd: vk.CommandBuffer) void {
+pub fn transition(self: *const DepthBuffer, cmd: vk.CommandBuffer) void {
     self.device.cmdPipelineBarrier2(cmd, &.{
         .image_memory_barrier_count = 1,
         .p_image_memory_barriers = &.{.{

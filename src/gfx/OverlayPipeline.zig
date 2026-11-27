@@ -5,17 +5,17 @@
 
 const std = @import("std");
 
-const VulkanContext = @import("vulkan_context.zig");
+const VulkanContext = @import("VulkanContext.zig");
 const vk = VulkanContext.vk;
 const VkMemory = @import("dvui_vulkan_renderer").VkMemory;
-const VoxelPipeline = @import("voxel_pipeline.zig");
+const VoxelPipeline = @import("VoxelPipeline.zig");
 const Pipeline = @import("pipeline.zig");
-const Buffer = @import("buffer.zig");
-const Assets = @import("../assets.zig");
+const Buffer = @import("Buffer.zig");
+const Assets = @import("../Assets.zig");
 const sprites = @import("sprites.zig");
 const Vertex = sprites.Vertex;
 
-const Self = @This();
+const OverlayPipeline = @This();
 
 /// vertices per frame
 const capacity = 1 << 15;
@@ -41,7 +41,7 @@ pipelines: std.EnumArray(Pass, vk.Pipeline),
 buffers: [VoxelPipeline.max_frames]Buffer = undefined,
 frame_count: usize,
 
-pub fn init(device: vk.DeviceProxy, memory: VkMemory, assets: *const Assets, voxel: *const VoxelPipeline, color_format: vk.Format, depth_format: vk.Format, frame_count: usize) !Self {
+pub fn init(device: vk.DeviceProxy, memory: VkMemory, assets: *const Assets, voxel: *const VoxelPipeline, color_format: vk.Format, depth_format: vk.Format, frame_count: usize) !OverlayPipeline {
     const layout = try device.createPipelineLayout(&.{
         .set_layout_count = 1,
         .p_set_layouts = &.{voxel.set_layout},
@@ -84,7 +84,7 @@ pub fn init(device: vk.DeviceProxy, memory: VkMemory, assets: *const Assets, vox
         created += 1;
     }
 
-    var self: Self = .{ .device = device, .layout = layout, .pipelines = pipelines, .frame_count = frame_count };
+    var self: OverlayPipeline = .{ .device = device, .layout = layout, .pipelines = pipelines, .frame_count = frame_count };
     var buffers: usize = 0;
     errdefer for (self.buffers[0..buffers]) |*buffer| buffer.deinit();
     for (self.buffers[0..frame_count]) |*buffer| {
@@ -94,20 +94,20 @@ pub fn init(device: vk.DeviceProxy, memory: VkMemory, assets: *const Assets, vox
     return self;
 }
 
-pub fn deinit(self: *Self) void {
+pub fn deinit(self: *OverlayPipeline) void {
     for (self.buffers[0..self.frame_count]) |*buffer| buffer.deinit();
     for (self.pipelines.values) |pipeline| self.device.destroyPipeline(pipeline, null);
     self.device.destroyPipelineLayout(self.layout, null);
 }
 
 /// An empty batch over `frame`'s vertex buffer (whose previous use must have completed).
-pub fn batch(self: *const Self, frame: usize) sprites.Batch {
+pub fn batch(self: *const OverlayPipeline, frame: usize) sprites.Batch {
     return .{ .vertices = self.buffers[frame].slice(Vertex) };
 }
 
 /// Draws `range` of `frame`'s batch. Viewport and scissor are expected to be set
 /// already (`VoxelPipeline.bind` does that).
-pub fn draw(self: *const Self, cmd: vk.CommandBuffer, voxel: *const VoxelPipeline, frame: usize, extent: vk.Extent2D, pass: Pass, range: sprites.Range) void {
+pub fn draw(self: *const OverlayPipeline, cmd: vk.CommandBuffer, voxel: *const VoxelPipeline, frame: usize, extent: vk.Extent2D, pass: Pass, range: sprites.Range) void {
     if (range.count == 0) return;
     const device = self.device;
     device.cmdBindPipeline(cmd, .graphics, self.pipelines.get(pass));

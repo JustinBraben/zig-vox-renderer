@@ -1,11 +1,11 @@
 //! The player's hotbar: `size` slots of stacked blocks, one of them selected.
 
 const std = @import("std");
-const block = @import("../world/block.zig");
+const block = @import("../world.zig").block;
 const BlockId = block.BlockId;
 const Stack = block.Stack;
 
-const Self = @This();
+const Inventory = @This();
 
 pub const size = 9;
 
@@ -14,7 +14,7 @@ selected: usize = 0,
 
 /// Adds `count` of `id`, topping up its stacks first, then filling empty slots from
 /// the left. Returns how many didn't fit.
-pub fn add(self: *Self, id: BlockId, count: u8) u8 {
+pub fn add(self: *Inventory, id: BlockId, count: u8) u8 {
     var left = count;
     for (&self.slots) |*slot| {
         if (left == 0) break;
@@ -34,13 +34,13 @@ pub fn add(self: *Self, id: BlockId, count: u8) u8 {
 }
 
 /// The block in the selected slot, if any.
-pub fn held(self: *const Self) ?BlockId {
+pub fn held(self: *const Inventory) ?BlockId {
     const slot = self.slots[self.selected];
     return if (slot.count > 0) slot.block else null;
 }
 
 /// Removes one block from the selected slot and returns it, or null when it's empty.
-pub fn takeOne(self: *Self) ?BlockId {
+pub fn takeOne(self: *Inventory) ?BlockId {
     const id = self.held() orelse return null;
     const slot = &self.slots[self.selected];
     slot.count -= 1;
@@ -49,13 +49,13 @@ pub fn takeOne(self: *Self) ?BlockId {
 }
 
 /// Selects the next (`delta` > 0) or previous slot, wrapping around.
-pub fn scroll(self: *Self, delta: i32) void {
+pub fn scroll(self: *Inventory, delta: i32) void {
     self.selected = @intCast(@mod(@as(i32, @intCast(self.selected)) + delta, size));
 }
 
 /// Creative mode's pick block: selects `id` if the hotbar has it, otherwise puts one in
 /// the selected slot.
-pub fn pick(self: *Self, id: BlockId) void {
+pub fn pick(self: *Inventory, id: BlockId) void {
     for (self.slots, 0..) |slot, i| {
         if (slot.count > 0 and slot.block == id) {
             self.selected = i;
@@ -67,7 +67,7 @@ pub fn pick(self: *Self, id: BlockId) void {
 
 /// Puts a block from the palette (`BlockId.placeable`) that the hotbar doesn't have yet
 /// into every empty slot, so creative mode has something to build with.
-pub fn fillEmpty(self: *Self) void {
+pub fn fillEmpty(self: *Inventory) void {
     var next: usize = 0;
     for (&self.slots) |*slot| {
         if (slot.count > 0) continue;
@@ -77,7 +77,7 @@ pub fn fillEmpty(self: *Self) void {
     }
 }
 
-fn has(self: *const Self, id: BlockId) bool {
+fn has(self: *const Inventory, id: BlockId) bool {
     for (self.slots) |slot| {
         if (slot.count > 0 and slot.block == id) return true;
     }
@@ -86,7 +86,7 @@ fn has(self: *const Self, id: BlockId) bool {
 
 /// Empties slots holding something that isn't a block (from a damaged save) and keeps
 /// counts and the selection in range.
-pub fn sanitize(self: *Self) void {
+pub fn sanitize(self: *Inventory) void {
     for (&self.slots) |*slot| {
         const named = std.enums.tagName(BlockId, slot.block) != null;
         if (slot.count == 0 or !named or slot.block == .air) {
@@ -101,7 +101,7 @@ pub fn sanitize(self: *Self) void {
 const testing = std.testing;
 
 test "adds onto existing stacks before empty slots, up to a full stack" {
-    var inv: Self = .{};
+    var inv: Inventory = .{};
     inv.slots[3] = .{ .block = .dirt, .count = 60 };
     try testing.expectEqual(0, inv.add(.dirt, 10));
     try testing.expectEqual(Stack{ .block = .dirt, .count = 64 }, inv.slots[3]);
@@ -112,14 +112,14 @@ test "adds onto existing stacks before empty slots, up to a full stack" {
 }
 
 test "returns what doesn't fit" {
-    var inv: Self = .{};
+    var inv: Inventory = .{};
     for (0..size) |_| try testing.expectEqual(0, inv.add(.sand, 64));
     try testing.expectEqual(5, inv.add(.sand, 5));
     try testing.expectEqual(3, inv.add(.dirt, 3));
 }
 
 test "taking the last one empties the slot" {
-    var inv: Self = .{};
+    var inv: Inventory = .{};
     _ = inv.add(.planks, 2);
     try testing.expectEqual(BlockId.planks, inv.takeOne().?);
     try testing.expectEqual(BlockId.planks, inv.takeOne().?);
@@ -128,7 +128,7 @@ test "taking the last one empties the slot" {
 }
 
 test "scrolling wraps, picking selects or replaces" {
-    var inv: Self = .{};
+    var inv: Inventory = .{};
     inv.scroll(-1);
     try testing.expectEqual(size - 1, inv.selected);
     inv.scroll(1);
@@ -144,7 +144,7 @@ test "scrolling wraps, picking selects or replaces" {
 }
 
 test "fills empty slots with blocks it doesn't have" {
-    var inv: Self = .{};
+    var inv: Inventory = .{};
     inv.slots[2] = .{ .block = .grass, .count = 5 };
     inv.fillEmpty();
     for (inv.slots, 0..) |slot, i| {

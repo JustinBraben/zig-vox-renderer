@@ -13,7 +13,7 @@ pub const vk = VkRenderer.vulkan;
 
 const log = std.log.scoped(.vulkan);
 
-const Self = @This();
+const VulkanContext = @This();
 
 pub const api_version = vk.API_VERSION_1_3;
 const enable_validation = builtin.mode == .Debug;
@@ -45,10 +45,10 @@ fn loader(instance: vk.Instance, name: [*:0]const u8) vk.PfnVoidFunction {
     return get_instance_proc_addr(instance, name);
 }
 
-pub fn init(allocator: Allocator, window: *c.SDL_Window) !Self {
+pub fn init(allocator: Allocator, window: *c.SDL_Window) !VulkanContext {
     get_instance_proc_addr = @ptrCast(c.SDL_Vulkan_GetVkGetInstanceProcAddr() orelse return error.VulkanLoaderNotFound);
 
-    var self: Self = undefined;
+    var self: VulkanContext = undefined;
     self.allocator = allocator;
     self.vkb = .load(loader);
 
@@ -71,14 +71,14 @@ pub fn init(allocator: Allocator, window: *c.SDL_Window) !Self {
     return self;
 }
 
-pub fn deinit(self: *Self) void {
+pub fn deinit(self: *VulkanContext) void {
     self.device.destroyDevice(null);
     self.allocator.destroy(self.vkd);
     self.instance.destroySurfaceKHR(self.surface, null);
     self.destroyInstance();
 }
 
-fn createInstance(self: *Self) !void {
+fn createInstance(self: *VulkanContext) !void {
     var enabled_layers: std.ArrayList([*:0]const u8) = .empty;
     defer enabled_layers.deinit(self.allocator);
 
@@ -147,7 +147,7 @@ fn createInstance(self: *Self) !void {
     }
 }
 
-fn destroyInstance(self: *Self) void {
+fn destroyInstance(self: *VulkanContext) void {
     if (self.debug_messenger != .null_handle) self.instance.destroyDebugUtilsMessengerEXT(self.debug_messenger, null);
     self.instance.destroyInstance(null);
     self.allocator.destroy(self.vki);
@@ -176,7 +176,7 @@ fn debugCallback(
     return .false;
 }
 
-fn pickPhysicalDevice(self: *Self) !void {
+fn pickPhysicalDevice(self: *VulkanContext) !void {
     const physical_devices = try self.instance.enumeratePhysicalDevicesAlloc(self.allocator);
     defer self.allocator.free(physical_devices);
 
@@ -248,7 +248,7 @@ fn pickPhysicalDevice(self: *Self) !void {
     self.present_queue_index = f.present;
 }
 
-fn createLogicalDevice(self: *Self) !void {
+fn createLogicalDevice(self: *VulkanContext) !void {
     var enabled_extensions: std.ArrayList([*:0]const u8) = .empty;
     defer enabled_extensions.deinit(self.allocator);
     try enabled_extensions.append(self.allocator, vk.extensions.khr_swapchain.name);

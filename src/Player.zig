@@ -7,7 +7,7 @@ const math = @import("math.zig");
 const Vec3 = math.Vec3;
 const Pos = @Vector(3, f64);
 
-const Self = @This();
+const Player = @This();
 
 pub const half_width = 0.3;
 pub const height = 1.8;
@@ -56,13 +56,13 @@ fall_peak: ?f64 = null,
 /// how far the player fell before last landing, until `takeLanding`
 landing: ?f64 = null,
 
-pub fn init(position: Pos) Self {
+pub fn init(position: Pos) Player {
     return .{ .position = position, .prev_position = position };
 }
 
 /// Advances one fixed step. `world.isSolid(x, y, z) bool` decides what blocks movement,
 /// `world.isWater(x, y, z) bool` where the player swims.
-pub fn step(self: *Self, world: anytype, input: Input, yaw: f32, pitch: f32, dt: f64) void {
+pub fn step(self: *Player, world: anytype, input: Input, yaw: f32, pitch: f32, dt: f64) void {
     self.prev_position = self.position;
     if (self.flying) return self.fly(input, yaw, pitch, dt);
     self.in_water = touchesWater(world, self.position);
@@ -105,19 +105,19 @@ pub fn step(self: *Self, world: anytype, input: Input, yaw: f32, pitch: f32, dt:
 }
 
 /// How many blocks the player fell before landing since the last call, if it landed.
-pub fn takeLanding(self: *Self) ?f64 {
+pub fn takeLanding(self: *Player) ?f64 {
     defer self.landing = null;
     return self.landing;
 }
 
 /// Camera position, interpolated `alpha` (0..1) of the way from the previous step.
-pub fn eye(self: *const Self, alpha: f64) Pos {
+pub fn eye(self: *const Player, alpha: f64) Pos {
     const p = self.prev_position + (self.position - self.prev_position) * @as(Pos, @splat(alpha));
     return p + Pos{ 0, eye_height, 0 };
 }
 
 /// Whether the block at (x, y, z) overlaps the player's box.
-pub fn intersectsBlock(self: *const Self, x: i32, y: i32, z: i32) bool {
+pub fn intersectsBlock(self: *const Player, x: i32, y: i32, z: i32) bool {
     const b = bounds(self.position);
     const cell = [3]f64{ @floatFromInt(x), @floatFromInt(y), @floatFromInt(z) };
     inline for (0..3) |i| {
@@ -126,13 +126,13 @@ pub fn intersectsBlock(self: *const Self, x: i32, y: i32, z: i32) bool {
     return true;
 }
 
-pub fn setFlying(self: *Self, flying: bool) void {
+pub fn setFlying(self: *Player, flying: bool) void {
     self.flying = flying;
     self.on_ground = false;
     self.fall_peak = null;
 }
 
-fn fly(self: *Self, input: Input, yaw: f32, pitch: f32, dt: f64) void {
+fn fly(self: *Player, input: Input, yaw: f32, pitch: f32, dt: f64) void {
     const forward = math.fromDirection(yaw, pitch);
     const right = math.normalize(math.cross(forward, .{ 0, 1, 0 }));
     const dir = math.scale(forward, input.forward) + math.scale(right, input.right) + Vec3{ 0, input.up, 0 };
@@ -166,7 +166,7 @@ fn bounds(p: Pos) Box {
 
 /// Moves along one axis and pushes back out of any solid block. Steps are short
 /// (at most 1 block at terminal speed and 60 Hz), so nothing is skipped over.
-fn moveAxis(self: *Self, world: anytype, comptime axis: usize, delta: f64) void {
+fn moveAxis(self: *Player, world: anytype, comptime axis: usize, delta: f64) void {
     if (delta == 0) return;
     self.position[axis] += delta;
     const b = bounds(self.position);
@@ -232,14 +232,14 @@ const PoolWorld = struct {
     }
 };
 
-fn simulate(p: *Self, input: Input, seconds: f64) void {
+fn simulate(p: *Player, input: Input, seconds: f64) void {
     const dt = 1.0 / 60.0;
     var t: f64 = 0;
     while (t < seconds) : (t += dt) p.step(TestWorld{}, input, 0, 0, dt);
 }
 
 test "falls and lands on the floor" {
-    var p = Self.init(.{ 0.5, 10, 0.5 });
+    var p = Player.init(.{ 0.5, 10, 0.5 });
     simulate(&p, .{}, 2);
     try std.testing.expectEqual(@as(f64, 0), p.position[1]);
     try std.testing.expect(p.on_ground);
@@ -247,7 +247,7 @@ test "falls and lands on the floor" {
 }
 
 test "a wall stops walking" {
-    var p = Self.init(.{ 0.5, 0, 0.5 });
+    var p = Player.init(.{ 0.5, 0, 0.5 });
     // yaw 90 faces +X
     const dt = 1.0 / 60.0;
     for (0..180) |_| p.step(TestWorld{}, .{ .forward = 1 }, 90, 0, dt);
@@ -256,7 +256,7 @@ test "a wall stops walking" {
 }
 
 test "jumps only from the ground, about 1.25 blocks high" {
-    var p = Self.init(.{ 0.5, 0, 0.5 });
+    var p = Player.init(.{ 0.5, 0, 0.5 });
     simulate(&p, .{}, 0.1);
     try std.testing.expect(p.on_ground);
 
@@ -274,7 +274,7 @@ test "jumps only from the ground, about 1.25 blocks high" {
 
 test "bumps its head on a ceiling" {
     // ceiling bottom at y = 4; standing on a pillar top at y = 1.5 leaves 0.7 blocks of headroom
-    var p = Self.init(.{ 0.5, 2, 5.5 });
+    var p = Player.init(.{ 0.5, 2, 5.5 });
     p.on_ground = true;
     p.step(TestWorld{}, .{ .jump = true }, 0, 0, 1.0 / 60.0);
     simulate(&p, .{}, 0.3);
@@ -282,7 +282,7 @@ test "bumps its head on a ceiling" {
 }
 
 test "block intersection" {
-    const p = Self.init(.{ 0.5, 0, 0.5 });
+    const p = Player.init(.{ 0.5, 0, 0.5 });
     try std.testing.expect(p.intersectsBlock(0, 0, 0));
     try std.testing.expect(p.intersectsBlock(0, 1, 0));
     try std.testing.expect(!p.intersectsBlock(0, 2, 0));
@@ -291,7 +291,7 @@ test "block intersection" {
 }
 
 test "reports how far it fell when it lands, from the top of a jump" {
-    var p = Self.init(.{ 0.5, 10, 0.5 });
+    var p = Player.init(.{ 0.5, 10, 0.5 });
     simulate(&p, .{}, 2);
     try std.testing.expectApproxEqAbs(@as(f64, 10), p.takeLanding().?, 1e-9);
     try std.testing.expectEqual(null, p.takeLanding());
@@ -304,7 +304,7 @@ test "reports how far it fell when it lands, from the top of a jump" {
 }
 
 test "falling into water breaks the fall" {
-    var p = Self.init(.{ 0.5, 30, 0.5 });
+    var p = Player.init(.{ 0.5, 30, 0.5 });
     const dt = 1.0 / 60.0;
     for (0..600) |_| p.step(PoolWorld{}, .{}, 0, 0, dt);
     try std.testing.expect(p.on_ground);
@@ -313,7 +313,7 @@ test "falling into water breaks the fall" {
 
 test "sinks slowly in water and swims up while jump is held" {
     const dt = 1.0 / 60.0;
-    var p = Self.init(.{ 0.5, 6, 0.5 });
+    var p = Player.init(.{ 0.5, 6, 0.5 });
     for (0..30) |_| {
         p.step(PoolWorld{}, .{}, 0, 0, dt);
         try std.testing.expect(p.velocity[1] >= -sink_speed);

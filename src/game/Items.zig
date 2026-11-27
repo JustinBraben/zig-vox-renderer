@@ -3,15 +3,15 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const block = @import("../world/block.zig");
+const block = @import("../world.zig").block;
 const Stack = block.Stack;
-const sprites = @import("../gfx/sprites.zig");
-const Player = @import("../player.zig");
-const Inventory = @import("inventory.zig");
+const sprites = @import("../gfx.zig").sprites;
+const Player = @import("../Player.zig");
+const Inventory = @import("Inventory.zig");
 
 const Pos = @Vector(3, f64);
 
-const Self = @This();
+const Items = @This();
 
 /// half the size of the cube drawn
 pub const half = 0.125;
@@ -43,11 +43,11 @@ pub const Item = struct {
 
 items: std.ArrayList(Item) = .empty,
 
-pub fn deinit(self: *Self, allocator: Allocator) void {
+pub fn deinit(self: *Items, allocator: Allocator) void {
     self.items.deinit(allocator);
 }
 
-pub fn spawn(self: *Self, allocator: Allocator, stack: Stack, position: Pos, velocity: Pos, pickup_delay: f32) !void {
+pub fn spawn(self: *Items, allocator: Allocator, stack: Stack, position: Pos, velocity: Pos, pickup_delay: f32) !void {
     try self.items.append(allocator, .{
         .stack = stack,
         .position = position,
@@ -59,7 +59,7 @@ pub fn spawn(self: *Self, allocator: Allocator, stack: Stack, position: Pos, vel
 
 /// Advances every item one fixed step. `world.isSolid(x, y, z) bool` and
 /// `world.isWater(x, y, z) bool` as for the player.
-pub fn step(self: *Self, world: anytype, dt: f64) void {
+pub fn step(self: *Items, world: anytype, dt: f64) void {
     var i: usize = 0;
     while (i < self.items.items.len) {
         const item = &self.items.items[i];
@@ -129,7 +129,7 @@ fn move(item: *Item, world: anytype, dt: f64) void {
 
 /// Moves the items within reach of `player` into `inventory`, as many as fit; returns
 /// how many blocks were picked up.
-pub fn collect(self: *Self, player: *const Player, inventory: *Inventory) u32 {
+pub fn collect(self: *Items, player: *const Player, inventory: *Inventory) u32 {
     var picked: u32 = 0;
     var i: usize = 0;
     while (i < self.items.items.len) {
@@ -159,7 +159,7 @@ fn inReach(player: *const Player, p: Pos) bool {
 
 /// Adds the items to `batch` as cubes relative to `camera`, `alpha` (0..1) of the way
 /// from their previous step. `light(item_position) f32` gives each one's brightness.
-pub fn draw(self: *const Self, batch: *sprites.Batch, camera: Pos, alpha: f64, light: anytype) void {
+pub fn draw(self: *const Items, batch: *sprites.Batch, camera: Pos, alpha: f64, light: anytype) void {
     for (self.items.items) |item| {
         const p = item.prev_position + (item.position - item.prev_position) * @as(Pos, @splat(alpha));
         const bob = 0.05 * (1 + @sin(item.age * 2.5));
@@ -190,14 +190,14 @@ const TestWorld = struct {
 
 const testing = std.testing;
 
-fn simulate(items: *Self, seconds: f64) void {
+fn simulate(items: *Items, seconds: f64) void {
     const dt = 1.0 / 60.0;
     var t: f64 = 0;
     while (t < seconds) : (t += dt) items.step(TestWorld{}, dt);
 }
 
 test "falls, lands and slides to a stop" {
-    var items: Self = .{};
+    var items: Items = .{};
     defer items.deinit(testing.allocator);
     try items.spawn(testing.allocator, .{ .block = .dirt, .count = 1 }, .{ 0.5, 3, 0.5 }, .{ 0, 2, -3 }, 0);
     simulate(&items, 3);
@@ -208,7 +208,7 @@ test "falls, lands and slides to a stop" {
 }
 
 test "a wall stops it" {
-    var items: Self = .{};
+    var items: Items = .{};
     defer items.deinit(testing.allocator);
     try items.spawn(testing.allocator, .{ .block = .dirt, .count = 1 }, .{ 0.5, 0, 0.5 }, .{ 10, 0, 0 }, 0);
     simulate(&items, 1);
@@ -216,7 +216,7 @@ test "a wall stops it" {
 }
 
 test "sinks slowly in water" {
-    var items: Self = .{};
+    var items: Items = .{};
     defer items.deinit(testing.allocator);
     try items.spawn(testing.allocator, .{ .block = .dirt, .count = 1 }, .{ 0.5, 4.5, 10.5 }, .{ 0, 0, 0 }, 0);
     simulate(&items, 1);
@@ -233,7 +233,7 @@ test "is pushed up out of a block placed on it" {
             return false;
         }
     };
-    var items: Self = .{};
+    var items: Items = .{};
     defer items.deinit(testing.allocator);
     try items.spawn(testing.allocator, .{ .block = .dirt, .count = 1 }, .{ 0.5, 0, 0.5 }, .{ 0, 0, 0 }, 0);
     items.step(Walled{}, 1.0 / 60.0);
@@ -241,7 +241,7 @@ test "is pushed up out of a block placed on it" {
 }
 
 test "picked up after the delay, partly when the inventory is nearly full" {
-    var items: Self = .{};
+    var items: Items = .{};
     defer items.deinit(testing.allocator);
     var inv: Inventory = .{};
     for (0..Inventory.size - 1) |_| _ = inv.add(.stone, 64);
@@ -258,7 +258,7 @@ test "picked up after the delay, partly when the inventory is nearly full" {
 }
 
 test "disappear after their lifetime" {
-    var items: Self = .{};
+    var items: Items = .{};
     defer items.deinit(testing.allocator);
     try items.spawn(testing.allocator, .{ .block = .dirt, .count = 1 }, .{ 0.5, 0, 0.5 }, .{ 0, 0, 0 }, 0);
     items.items.items[0].age = lifetime - 0.001;

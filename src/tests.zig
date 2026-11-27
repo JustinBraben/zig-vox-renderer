@@ -1,21 +1,12 @@
-//! Root for `zig build test`: pulls in the modules that have no GPU/SDL dependencies.
+//! Root for `zig build test`. The `world` and `game` namespaces pull in all their
+//! files' tests; `gfx` and `ui` need Vulkan, SDL or dvui for most of their files,
+//! so only the parts without those are referenced.
 
 test {
     _ = @import("math.zig");
-    _ = @import("player.zig");
-    _ = @import("world/chunk.zig");
-    _ = @import("world/terrain.zig");
-    _ = @import("world/worms.zig");
-    _ = @import("world/mesher.zig");
-    _ = @import("world/raycast.zig");
-    _ = @import("world/lod.zig");
-    _ = @import("world/light.zig");
-    _ = @import("world/world.zig");
-    _ = @import("world/workers.zig");
-    _ = @import("world/save.zig");
-    _ = @import("gfx/sprites.zig");
-    _ = @import("ui/hud.zig");
-    _ = @import("game/inventory.zig");
-    _ = @import("game/items.zig");
-    _ = @import("game/game.zig");
+    _ = @import("Player.zig");
+    _ = @import("world.zig");
+    _ = @import("game.zig");
+    _ = @import("gfx.zig").sprites;
+    _ = @import("ui.zig").hud;
 }

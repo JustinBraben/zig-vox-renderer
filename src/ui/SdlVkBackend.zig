@@ -16,7 +16,7 @@ pub const c = @import("sdl3-c");
 
 pub const kind: dvui.enums.Backend = .custom;
 
-const Self = @This();
+const SdlVkBackend = @This();
 const log = std.log.scoped(.SdlVkBackend);
 
 const cursor_enum_count = @typeInfo(dvui.enums.Cursor).@"enum".fields.len;
@@ -35,19 +35,19 @@ text_input_rect_last: ?dvui.Rect.Natural = null,
 cursor_backing: [cursor_enum_count]?*c.SDL_Cursor = @splat(null),
 cursor_backing_tried: [cursor_enum_count]bool = @splat(false),
 
-pub fn init(io: std.Io, window: *c.SDL_Window, renderer: *VkRenderer) Self {
+pub fn init(io: std.Io, window: *c.SDL_Window, renderer: *VkRenderer) SdlVkBackend {
     dvui.io = io;
     return .{ .io = io, .window = window, .renderer = renderer };
 }
 
-pub fn deinit(self: *Self) void {
+pub fn deinit(self: *SdlVkBackend) void {
     for (self.cursor_backing) |cursor| {
         if (cursor) |cur| c.SDL_DestroyCursor(cur);
     }
     self.* = undefined;
 }
 
-pub fn backend(self: *Self) dvui.Backend {
+pub fn backend(self: *SdlVkBackend) dvui.Backend {
     return dvui.Backend.init(self);
 }
 
@@ -70,26 +70,26 @@ fn mapGenericError(err: anyerror) dvui.Backend.GenericError {
 // Frame
 //
 
-pub fn begin(self: *Self, arena: std.mem.Allocator) !void {
+pub fn begin(self: *SdlVkBackend, arena: std.mem.Allocator) !void {
     self.arena = arena;
     self.renderer.beginWithSize(arena, self.pixelSize()) catch |err| return mapGenericError(err);
 }
 
 /// Submission is owned by the application, which calls `renderer.endFrame()`.
-pub fn end(_: *Self) !void {}
+pub fn end(_: *SdlVkBackend) !void {}
 
 /// Presentation is owned by the application.
-pub fn renderPresent(_: *Self) void {}
+pub fn renderPresent(_: *SdlVkBackend) void {}
 
-pub fn nanoTime(self: *Self) i128 {
+pub fn nanoTime(self: *SdlVkBackend) i128 {
     return std.Io.Clock.awake.now(self.io).nanoseconds;
 }
 
-pub fn sleep(self: *Self, ns: u64) void {
+pub fn sleep(self: *SdlVkBackend, ns: u64) void {
     std.Io.Clock.Duration.sleep(.{ .clock = .awake, .raw = .fromNanoseconds(ns) }, self.io) catch {};
 }
 
-pub fn pixelSize(self: *Self) dvui.Size.Physical {
+pub fn pixelSize(self: *SdlVkBackend) dvui.Size.Physical {
     var w: i32 = undefined;
     var h: i32 = undefined;
     toErr(c.SDL_GetWindowSizeInPixels(self.window, &w, &h), "SDL_GetWindowSizeInPixels in pixelSize") catch return self.last_pixel_size;
@@ -97,7 +97,7 @@ pub fn pixelSize(self: *Self) dvui.Size.Physical {
     return self.last_pixel_size;
 }
 
-pub fn windowSize(self: *Self) dvui.Size.Natural {
+pub fn windowSize(self: *SdlVkBackend) dvui.Size.Natural {
     var w: i32 = undefined;
     var h: i32 = undefined;
     toErr(c.SDL_GetWindowSize(self.window, &w, &h), "SDL_GetWindowSize in windowSize") catch return self.last_window_size;
@@ -105,7 +105,7 @@ pub fn windowSize(self: *Self) dvui.Size.Natural {
     return self.last_window_size;
 }
 
-pub fn contentScale(self: *Self) f32 {
+pub fn contentScale(self: *SdlVkBackend) f32 {
     const display_id = c.SDL_GetDisplayForWindow(self.window);
     const scale = c.SDL_GetDisplayContentScale(display_id);
     if (scale == 0.0) {
@@ -119,44 +119,44 @@ pub fn contentScale(self: *Self) f32 {
 // Rendering, delegated to the Vulkan renderer
 //
 
-pub fn drawClippedTriangles(self: *Self, texture: ?dvui.Texture, vtx: []const dvui.Vertex, idx: []const dvui.Vertex.Index, clipr: ?dvui.Rect.Physical) !void {
+pub fn drawClippedTriangles(self: *SdlVkBackend, texture: ?dvui.Texture, vtx: []const dvui.Vertex, idx: []const dvui.Vertex.Index, clipr: ?dvui.Rect.Physical) !void {
     if (!self.renderer.frame_active) return;
     self.renderer.drawClippedTriangles(self.last_pixel_size, texture, vtx, idx, clipr) catch |err| return mapGenericError(err);
 }
 
-pub fn textureCreate(self: *Self, pixels: [*]const u8, options: dvui.Texture.CreateOptions) dvui.Backend.TextureError!dvui.Texture {
+pub fn textureCreate(self: *SdlVkBackend, pixels: [*]const u8, options: dvui.Texture.CreateOptions) dvui.Backend.TextureError!dvui.Texture {
     return self.renderer.textureCreate(pixels, options);
 }
 
-pub fn textureDestroy(self: *Self, texture: dvui.Texture) void {
+pub fn textureDestroy(self: *SdlVkBackend, texture: dvui.Texture) void {
     self.renderer.textureDestroy(texture);
 }
 
-pub fn textureCreateTarget(self: *Self, options: dvui.Texture.CreateOptions) dvui.Backend.TextureError!dvui.TextureTarget {
+pub fn textureCreateTarget(self: *SdlVkBackend, options: dvui.Texture.CreateOptions) dvui.Backend.TextureError!dvui.TextureTarget {
     return self.renderer.textureCreateTarget(options);
 }
 
-pub fn textureReadTarget(self: *Self, texture: dvui.TextureTarget, pixels_out: [*]u8) dvui.Backend.TextureError!void {
+pub fn textureReadTarget(self: *SdlVkBackend, texture: dvui.TextureTarget, pixels_out: [*]u8) dvui.Backend.TextureError!void {
     return self.renderer.textureReadTarget(texture, pixels_out);
 }
 
-pub fn textureClearTarget(self: *Self, texture: dvui.TextureTarget) void {
+pub fn textureClearTarget(self: *SdlVkBackend, texture: dvui.TextureTarget) void {
     self.renderer.textureClearTarget(texture) catch |err| log.err("clearing Vulkan texture target failed: {}", .{err});
 }
 
-pub fn textureDestroyTarget(self: *Self, texture: dvui.TextureTarget) void {
+pub fn textureDestroyTarget(self: *SdlVkBackend, texture: dvui.TextureTarget) void {
     self.renderer.textureDestroyTarget(texture);
 }
 
-pub fn textureFromTarget(self: *Self, texture: dvui.TextureTarget) dvui.Backend.TextureError!dvui.Texture {
+pub fn textureFromTarget(self: *SdlVkBackend, texture: dvui.TextureTarget) dvui.Backend.TextureError!dvui.Texture {
     return self.renderer.textureFromTarget(texture);
 }
 
-pub fn textureFromTargetTemp(_: *Self, texture: dvui.TextureTarget) dvui.Backend.TextureError!dvui.Texture {
+pub fn textureFromTargetTemp(_: *SdlVkBackend, texture: dvui.TextureTarget) dvui.Backend.TextureError!dvui.Texture {
     return dvui.Texture.cast(texture);
 }
 
-pub fn renderTarget(self: *Self, texture: ?dvui.TextureTarget) dvui.Backend.GenericError!void {
+pub fn renderTarget(self: *SdlVkBackend, texture: ?dvui.TextureTarget) dvui.Backend.GenericError!void {
     return self.renderer.renderTarget(texture) catch |err| return mapGenericError(err);
 }
 
@@ -164,7 +164,7 @@ pub fn renderTarget(self: *Self, texture: ?dvui.TextureTarget) dvui.Backend.Gene
 // Platform
 //
 
-pub fn clipboardText(self: *Self) ![]const u8 {
+pub fn clipboardText(self: *SdlVkBackend) ![]const u8 {
     if (!c.SDL_HasClipboardText()) return &.{};
 
     const p = c.SDL_GetClipboardText();
@@ -177,20 +177,20 @@ pub fn clipboardText(self: *Self) ![]const u8 {
     return try self.arena.dupe(u8, str);
 }
 
-pub fn clipboardTextSet(self: *Self, text: []const u8) !void {
+pub fn clipboardTextSet(self: *SdlVkBackend, text: []const u8) !void {
     if (text.len == 0) return;
     const c_text = try self.arena.dupeSentinel(u8, text, 0);
     defer self.arena.free(c_text);
     try toErr(c.SDL_SetClipboardText(c_text.ptr), "SDL_SetClipboardText in clipboardTextSet");
 }
 
-pub fn openURL(self: *Self, url: []const u8, _: bool) !void {
+pub fn openURL(self: *SdlVkBackend, url: []const u8, _: bool) !void {
     const c_url = try self.arena.dupeSentinel(u8, url, 0);
     defer self.arena.free(c_url);
     try toErr(c.SDL_OpenURL(c_url.ptr), "SDL_OpenURL in openURL");
 }
 
-pub fn preferredColorScheme(_: *Self) ?dvui.enums.ColorScheme {
+pub fn preferredColorScheme(_: *SdlVkBackend) ?dvui.enums.ColorScheme {
     return switch (c.SDL_GetSystemTheme()) {
         c.SDL_SYSTEM_THEME_DARK => .dark,
         c.SDL_SYSTEM_THEME_LIGHT => .light,
@@ -198,17 +198,17 @@ pub fn preferredColorScheme(_: *Self) ?dvui.enums.ColorScheme {
     };
 }
 
-pub fn prefersReducedMotion(_: *Self) bool {
+pub fn prefersReducedMotion(_: *SdlVkBackend) bool {
     return false;
 }
 
-pub fn refresh(_: *Self) void {
+pub fn refresh(_: *SdlVkBackend) void {
     var ue = std.mem.zeroes(c.SDL_Event);
     ue.type = c.SDL_EVENT_USER;
     toErr(c.SDL_PushEvent(&ue), "SDL_PushEvent in refresh") catch {};
 }
 
-pub fn native(self: *Self, _: *dvui.Window) dvui.Window.Native {
+pub fn native(self: *SdlVkBackend, _: *dvui.Window) dvui.Window.Native {
     const props = c.SDL_GetWindowProperties(self.window);
     switch (builtin.os.tag) {
         .windows => return .{ .hwnd = c.SDL_GetPointerProperty(props, c.SDL_PROP_WINDOW_WIN32_HWND_POINTER, null) },
@@ -217,13 +217,13 @@ pub fn native(self: *Self, _: *dvui.Window) dvui.Window.Native {
     }
 }
 
-pub fn title(self: *Self, _: *dvui.Window, new_title: []const u8) void {
+pub fn title(self: *SdlVkBackend, _: *dvui.Window, new_title: []const u8) void {
     var buf: [300]u8 = @splat(0);
     const c_text: []const u8 = std.fmt.bufPrintSentinel(&buf, "{s}", .{new_title}, 0) catch "title: Error";
     _ = c.SDL_SetWindowTitle(self.window, c_text.ptr);
 }
 
-pub fn windowStateSet(self: *Self, _: *dvui.Window, state: dvui.enums.WindowState) void {
+pub fn windowStateSet(self: *SdlVkBackend, _: *dvui.Window, state: dvui.enums.WindowState) void {
     switch (state) {
         .fullscreen => _ = c.SDL_SetWindowFullscreen(self.window, true),
         .maximize => {
@@ -237,7 +237,7 @@ pub fn windowStateSet(self: *Self, _: *dvui.Window, state: dvui.enums.WindowStat
     }
 }
 
-fn cursorShow(_: *Self, value: ?bool) bool {
+fn cursorShow(_: *SdlVkBackend, value: ?bool) bool {
     const prev = c.SDL_CursorVisible();
     if (value) |val| {
         if (val) {
@@ -249,7 +249,7 @@ fn cursorShow(_: *Self, value: ?bool) bool {
     return prev;
 }
 
-pub fn setCursor(self: *Self, cursor: dvui.enums.Cursor) void {
+pub fn setCursor(self: *SdlVkBackend, cursor: dvui.enums.Cursor) void {
     if (cursor == self.cursor_last) return;
     defer self.cursor_last = cursor;
     const new_shown_state = if (cursor == .hidden) false else if (self.cursor_last == .hidden) true else null;
@@ -289,7 +289,7 @@ pub fn setCursor(self: *Self, cursor: dvui.enums.Cursor) void {
     }
 }
 
-pub fn textInputRect(self: *Self, rect: ?dvui.Rect.Natural) void {
+pub fn textInputRect(self: *SdlVkBackend, rect: ?dvui.Rect.Natural) void {
     // Only call through on an actual change, SDL_StartTextInput re-applies
     // text input properties every call.
     if (std.meta.eql(rect, self.text_input_rect_last)) return;
@@ -320,7 +320,7 @@ pub fn textInputRect(self: *Self, rect: ?dvui.Rect.Natural) void {
 ///
 /// Return true if the event is to be handled by dvui (e.g. the mouse is over a
 /// dvui window), so the application can ignore it.
-pub fn addEvent(self: *Self, win: *dvui.Window, event: c.SDL_Event) !bool {
+pub fn addEvent(self: *SdlVkBackend, win: *dvui.Window, event: c.SDL_Event) !bool {
     switch (event.type) {
         c.SDL_EVENT_KEY_DOWN => {
             return try win.addEventKey(.{

@@ -9,17 +9,17 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const chunk = @import("chunk.zig");
+const Chunk = @import("Chunk.zig");
 const BlockId = @import("block.zig").BlockId;
 const mesher = @import("mesher.zig");
-const Terrain = @import("terrain.zig");
-const World = @import("world.zig");
+const Terrain = @import("Terrain.zig");
+const World = @import("World.zig");
 const math = @import("../math.zig");
-const MeshArena = @import("../gfx/mesh_arena.zig");
-const VoxelPipeline = @import("../gfx/voxel_pipeline.zig");
-const vk = @import("../gfx/vulkan_context.zig").vk;
+const MeshArena = @import("../gfx.zig").MeshArena;
+const VoxelPipeline = @import("../gfx.zig").VoxelPipeline;
+const vk = @import("../gfx.zig").vk;
 
-const Self = @This();
+const Lod = @This();
 
 pub const Config = struct {
     /// level of the root tiles, the coarsest one
@@ -72,11 +72,11 @@ vertices: std.ArrayList(mesher.Vertex) = .empty,
 pass: u64 = 0,
 stats: Stats = .{},
 
-pub fn init(allocator: Allocator, io: std.Io) Self {
+pub fn init(allocator: Allocator, io: std.Io) Lod {
     return .{ .allocator = allocator, .io = io };
 }
 
-pub fn deinit(self: *Self) void {
+pub fn deinit(self: *Lod) void {
     self.tiles.deinit(self.allocator);
     self.leaves.deinit(self.allocator);
     self.columns.deinit(self.allocator);
@@ -86,7 +86,7 @@ pub fn deinit(self: *Self) void {
 }
 
 /// Drops every tile; their mesh ranges are freed as of `frame`.
-pub fn clear(self: *Self, arena: *MeshArena, frame: u64) !void {
+pub fn clear(self: *Lod, arena: *MeshArena, frame: u64) !void {
     var it = self.tiles.valueIterator();
     while (it.next()) |tile| if (tile.mesh) |range| try arena.free(range, frame);
     self.tiles.clearRetainingCapacity();
@@ -147,12 +147,12 @@ fn children(key: Key) [4]Key {
     };
 }
 
-pub fn update(self: *Self, arena: *MeshArena, world: *const World, camera_pos: @Vector(3, f64), world_config: World.Config, config: Config, frame: u64) !void {
+pub fn update(self: *Lod, arena: *MeshArena, world: *const World, camera_pos: @Vector(3, f64), world_config: World.Config, config: Config, frame: u64) !void {
     const start = self.now();
     defer self.stats.update_ms = toMs(self.since(start));
     std.debug.assert(config.max_level >= 1);
 
-    const center = chunk.ChunkPos.fromWorld(camera_pos);
+    const center = Chunk.Pos.fromWorld(camera_pos);
     const s: Selection = .{ .world = world, .world_config = world_config, .config = config, .cx = center.x, .cz = center.z };
     self.pass += 1;
     self.leaves.clearRetainingCapacity();
@@ -195,7 +195,7 @@ pub fn update(self: *Self, arena: *MeshArena, world: *const World, camera_pos: @
 
 /// Marks the tile as used and either splits it or records it as a leaf.
 /// Tiles are only visited once built, except roots.
-fn visit(self: *Self, s: *const Selection, key: Key) !void {
+fn visit(self: *Lod, s: *const Selection, key: Key) !void {
     const tile = self.tiles.getPtr(key);
     if (tile) |t| t.used = self.pass;
     if (s.wantsSplit(key) and try self.childrenReady(s, key)) {
@@ -216,7 +216,7 @@ fn visit(self: *Self, s: *const Selection, key: Key) !void {
 }
 
 /// Whether every child can be drawn; queues the children that aren't built.
-fn childrenReady(self: *Self, s: *const Selection, key: Key) !bool {
+fn childrenReady(self: *Lod, s: *const Selection, key: Key) !bool {
     var ready = true;
     for (children(key)) |child| {
         if (key.level == 1) {
@@ -232,7 +232,7 @@ fn childrenReady(self: *Self, s: *const Selection, key: Key) !bool {
 }
 
 /// Returns false, building nothing, when this frame has no room left to upload the tile.
-fn build(self: *Self, arena: *MeshArena, terrain: *const Terrain, key: Key) !bool {
+fn build(self: *Lod, arena: *MeshArena, terrain: *const Terrain, key: Key) !bool {
     var cells: Grid = undefined;
     var blocks: Surface = undefined;
     sample(terrain, key, &cells, &blocks);
@@ -250,7 +250,7 @@ fn build(self: *Self, arena: *MeshArena, terrain: *const Terrain, key: Key) !boo
 }
 
 /// Records draws for every leaf in view. Expects `pipeline.bind` to have been called.
-pub fn draw(self: *Self, cmd: vk.CommandBuffer, pipeline: *const VoxelPipeline, camera_pos: @Vector(3, f64), frustum: ?math.Frustum) void {
+pub fn draw(self: *Lod, cmd: vk.CommandBuffer, pipeline: *const VoxelPipeline, camera_pos: @Vector(3, f64), frustum: ?math.Frustum) void {
     const start = self.now();
     var drawn: u32 = 0;
     var vertices: u64 = 0;
@@ -258,7 +258,7 @@ pub fn draw(self: *Self, cmd: vk.CommandBuffer, pipeline: *const VoxelPipeline, 
         const tile = self.tiles.get(key).?;
         const range = tile.mesh orelse continue;
         const scale = width(key);
-        const blocks = chunk.size * scale;
+        const blocks = Chunk.size * scale;
         const corner: @Vector(3, f64) = .{
             @floatFromInt(@as(i64, key.x) * blocks),
             @floatFromInt(@as(i64, tile.extent.base) * scale),
@@ -278,11 +278,11 @@ pub fn draw(self: *Self, cmd: vk.CommandBuffer, pipeline: *const VoxelPipeline, 
     self.stats.draw_ms = toMs(self.since(start));
 }
 
-fn now(self: *const Self) std.Io.Timestamp {
+fn now(self: *const Lod) std.Io.Timestamp {
     return .now(self.io, .awake);
 }
 
-fn since(self: *const Self, start: std.Io.Timestamp) u64 {
+fn since(self: *const Lod, start: std.Io.Timestamp) u64 {
     return @intCast(@max(start.untilNow(self.io, .awake).nanoseconds, 0));
 }
 
@@ -292,11 +292,11 @@ fn toMs(ns: u64) f32 {
 
 // Tile meshing
 
-pub const grid_size = chunk.size + 2;
+pub const grid_size = Chunk.size + 2;
 /// Top of each cell of a tile plus a one-cell border, in cells, as [z][x].
 pub const Grid = [grid_size][grid_size]i32;
 /// Surface block of each cell of a tile, as [z][x].
-pub const Surface = [chunk.size][chunk.size]BlockId;
+pub const Surface = [Chunk.size][Chunk.size]BlockId;
 
 /// How far border faces reach below the lower side, in cells, to hide cracks
 /// against neighbors of another level.
@@ -318,8 +318,8 @@ pub const Extent = struct {
 /// Samples the terrain at the center of each cell of the tile and its border.
 pub fn sample(terrain: *const Terrain, key: Key, cells: *Grid, blocks: *Surface) void {
     const scale = width(key);
-    const x0 = key.x * chunk.size * scale;
-    const z0 = key.z * chunk.size * scale;
+    const x0 = key.x * Chunk.size * scale;
+    const z0 = key.z * Chunk.size * scale;
     for (cells, 0..) |*row, gz| {
         for (row, 0..) |*cell, gx| {
             const bx = x0 + (@as(i32, @intCast(gx)) - 1) * scale + @divFloor(scale, 2);
@@ -337,7 +337,7 @@ pub fn sample(terrain: *const Terrain, key: Key, cells: *Grid, blocks: *Surface)
             }
             // top of the surface block, rounded to whole cells
             cell.* = @divFloor(h + 1 + @divFloor(scale, 2), scale);
-            const interior = gx >= 1 and gx <= chunk.size and gz >= 1 and gz <= chunk.size;
+            const interior = gx >= 1 and gx <= Chunk.size and gz >= 1 and gz <= Chunk.size;
             if (interior) blocks[gz - 1][gx - 1] = surface;
         }
     }
@@ -352,19 +352,19 @@ pub fn meshTile(allocator: Allocator, cells: *const Grid, blocks: *const Surface
     for (cells, 0..) |row, gz| {
         for (row, 0..) |t, gx| {
             lowest = @min(lowest, t);
-            const interior = gx >= 1 and gx <= chunk.size and gz >= 1 and gz <= chunk.size;
+            const interior = gx >= 1 and gx <= Chunk.size and gz >= 1 and gz <= Chunk.size;
             if (interior) highest = @max(highest, t);
         }
     }
     const base = lowest - skirt;
 
-    for (0..chunk.size) |z| {
+    for (0..Chunk.size) |z| {
         var x: usize = 0;
-        while (x < chunk.size) {
+        while (x < Chunk.size) {
             const t = cells[z + 1][x + 1];
             const block = blocks[z][x];
             var end = x + 1;
-            while (end < chunk.size and cells[z + 1][end + 1] == t and blocks[z][end] == block) end += 1;
+            while (end < Chunk.size and cells[z + 1][end + 1] == t and blocks[z][end] == block) end += 1;
             const y = t - base;
             try emitFace(allocator, out, 2, .{ @intCast(x), y, @intCast(z) }, .{ @intCast(end), y, @intCast(z + 1) }, block.color());
             x = end;
@@ -378,8 +378,8 @@ pub fn meshTile(allocator: Allocator, cells: *const Grid, blocks: *const Surface
         .{ .face = 4, .dx = 0, .dz = 1 },
         .{ .face = 5, .dx = 0, .dz = -1 },
     };
-    for (0..chunk.size) |z| {
-        for (0..chunk.size) |x| {
+    for (0..Chunk.size) |z| {
+        for (0..Chunk.size) |x| {
             const t = cells[z + 1][x + 1];
             const xi: i32 = @intCast(x);
             const zi: i32 = @intCast(z);
@@ -387,7 +387,7 @@ pub fn meshTile(allocator: Allocator, cells: *const Grid, blocks: *const Surface
                 const nx = xi + side.dx;
                 const nz = zi + side.dz;
                 const nt = cells[@intCast(nz + 1)][@intCast(nx + 1)];
-                const border = nx < 0 or nx >= chunk.size or nz < 0 or nz >= chunk.size;
+                const border = nx < 0 or nx >= Chunk.size or nz < 0 or nz >= Chunk.size;
                 const bottom = if (border) @min(nt, t) - skirt else nt;
                 if (bottom >= t) continue;
                 const cliff = (t - nt) * scale > cliff_blocks;
@@ -460,7 +460,7 @@ test "tiles of real terrain fit the vertex format at every level" {
             out.clearRetainingCapacity();
             const extent = try meshTile(testing.allocator, &cells, &blocks, width(key), &out);
             try testing.expect(extent.height <= 63);
-            try testing.expect(out.items.len <= chunk.volume / 2 * 6 * 4);
+            try testing.expect(out.items.len <= Chunk.volume / 2 * 6 * 4);
         }
     }
 }

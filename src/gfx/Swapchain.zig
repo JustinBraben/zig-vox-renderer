@@ -3,10 +3,10 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const VulkanContext = @import("vulkan_context.zig");
+const VulkanContext = @import("VulkanContext.zig");
 const vk = VulkanContext.vk;
 
-const Self = @This();
+const Swapchain = @This();
 
 ctx: *const VulkanContext,
 
@@ -20,8 +20,8 @@ image_views: []vk.ImageView = &.{},
 /// Indexed by swapchain image, signaled by the frame's submit and waited on by present.
 render_finished: []vk.Semaphore = &.{},
 
-pub fn init(ctx: *const VulkanContext, extent: vk.Extent2D, vsync: bool) !Self {
-    var self: Self = .{
+pub fn init(ctx: *const VulkanContext, extent: vk.Extent2D, vsync: bool) !Swapchain {
+    var self: Swapchain = .{
         .ctx = ctx,
         .surface_format = try chooseSurfaceFormat(ctx),
         .extent = extent,
@@ -31,20 +31,20 @@ pub fn init(ctx: *const VulkanContext, extent: vk.Extent2D, vsync: bool) !Self {
     return self;
 }
 
-pub fn deinit(self: *Self) void {
+pub fn deinit(self: *Swapchain) void {
     self.destroy();
     self.ctx.device.destroySwapchainKHR(self.handle, null);
     self.handle = .null_handle;
 }
 
 /// Waits for the device to go idle and rebuilds the swapchain at `extent`.
-pub fn recreate(self: *Self, extent: vk.Extent2D) !void {
+pub fn recreate(self: *Swapchain, extent: vk.Extent2D) !void {
     try self.ctx.device.deviceWaitIdle();
     self.destroy();
     try self.create(extent);
 }
 
-fn create(self: *Self, requested: vk.Extent2D) !void {
+fn create(self: *Swapchain, requested: vk.Extent2D) !void {
     const ctx = self.ctx;
     const allocator = ctx.allocator;
     const device = ctx.device;
@@ -101,7 +101,7 @@ fn create(self: *Self, requested: vk.Extent2D) !void {
 }
 
 /// Destroys everything except the swapchain handle, which is reused as `old_swapchain`.
-fn destroy(self: *Self) void {
+fn destroy(self: *Swapchain) void {
     const allocator = self.ctx.allocator;
     const device = self.ctx.device;
     for (self.render_finished) |semaphore| device.destroySemaphore(semaphore, null);
@@ -135,7 +135,7 @@ fn chooseSurfaceFormat(ctx: *const VulkanContext) !vk.SurfaceFormatKHR {
     return formats[0];
 }
 
-fn choosePresentMode(self: *const Self) !vk.PresentModeKHR {
+fn choosePresentMode(self: *const Swapchain) !vk.PresentModeKHR {
     if (self.vsync) return .fifo_khr;
     const ctx = self.ctx;
     const modes = try ctx.instance.getPhysicalDeviceSurfacePresentModesAllocKHR(ctx.physical_device, ctx.surface, ctx.allocator);

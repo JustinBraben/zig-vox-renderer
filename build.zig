@@ -36,7 +36,7 @@ pub fn build(b: *std.Build) !void {
 
     // custom dvui backend: SDL3 for platform/events, dvui's Vulkan renderer for drawing
     const backend_mod = b.createModule(.{
-        .root_source_file = b.path("src/ui/dvui_sdl_vk_backend.zig"),
+        .root_source_file = b.path("src/ui/SdlVkBackend.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -64,7 +64,7 @@ pub fn build(b: *std.Build) !void {
     });
     b.installArtifact(exe);
 
-    // assets are loaded at startup from `assets/` next to the executable (see src/assets.zig)
+    // assets are loaded at startup from `assets/` next to the executable (see src/Assets.zig)
     addShader(b, optimize, "src/shaders/voxel.vert");
     addShader(b, optimize, "src/shaders/voxel.frag");
     addShader(b, optimize, "src/shaders/sky.vert");

@@ -3,11 +3,11 @@
 //! a whole number of pixels that grows with the window.
 
 const std = @import("std");
-const sprites = @import("../gfx/sprites.zig");
+const sprites = @import("../gfx.zig").sprites;
 const Batch = sprites.Batch;
 const rgba = sprites.rgba;
-const Inventory = @import("../game/inventory.zig");
-const BlockId = @import("../world/block.zig").BlockId;
+const Inventory = @import("../game.zig").Inventory;
+const BlockId = @import("../world.zig").BlockId;
 
 pub const State = struct {
     inventory: *const Inventory,

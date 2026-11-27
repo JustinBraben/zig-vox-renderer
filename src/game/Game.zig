@@ -7,16 +7,16 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const BlockId = @import("../world/block.zig").BlockId;
-const raycast = @import("../world/raycast.zig");
+const BlockId = @import("../world.zig").BlockId;
+const raycast = @import("../world.zig").raycast;
 const math = @import("../math.zig");
-const Player = @import("../player.zig");
-const Inventory = @import("inventory.zig");
-const Items = @import("items.zig");
+const Player = @import("../Player.zig");
+const Inventory = @import("Inventory.zig");
+const Items = @import("Items.zig");
 
 const Pos = @Vector(3, f64);
 
-const Self = @This();
+const Game = @This();
 
 pub const Mode = enum { survival, creative };
 
@@ -60,15 +60,15 @@ hurt_timer: f32 = 0,
 spawn: Pos,
 rng: std.Random.DefaultPrng,
 
-pub fn init(allocator: Allocator, spawn: Pos) Self {
+pub fn init(allocator: Allocator, spawn: Pos) Game {
     return .{ .allocator = allocator, .spawn = spawn, .rng = .init(0x5eed) };
 }
 
-pub fn deinit(self: *Self) void {
+pub fn deinit(self: *Game) void {
     self.items.deinit(self.allocator);
 }
 
-pub fn setMode(self: *Self, mode: Mode, player: *Player) void {
+pub fn setMode(self: *Game, mode: Mode, player: *Player) void {
     self.mode = mode;
     self.mining = null;
     switch (mode) {
@@ -79,7 +79,7 @@ pub fn setMode(self: *Self, mode: Mode, player: *Player) void {
 
 /// One fixed step, after the player's: fall damage, dropped items, healing, dying.
 /// `world` as for `Items.step`.
-pub fn step(self: *Self, world: anytype, player: *Player, dt: f64) Events {
+pub fn step(self: *Game, world: anytype, player: *Player, dt: f64) Events {
     var events: Events = .{};
     if (player.takeLanding()) |fall| {
         if (self.mode == .survival and fall > safe_fall) self.hurt(@intFromFloat(@ceil(fall - safe_fall)));
@@ -104,14 +104,14 @@ pub fn step(self: *Self, world: anytype, player: *Player, dt: f64) Events {
     return events;
 }
 
-pub fn hurt(self: *Self, amount: u32) void {
+pub fn hurt(self: *Game, amount: u32) void {
     self.health -|= @intCast(@min(amount, max_health));
     self.hurt_timer = hurt_seconds;
     self.regen_timer = 0;
 }
 
 /// Back at the spawn point with full health; the hotbar is kept.
-fn respawn(self: *Self, player: *Player) void {
+fn respawn(self: *Game, player: *Player) void {
     player.* = .init(self.spawn);
     self.health = max_health;
     self.mining = null;
@@ -120,7 +120,7 @@ fn respawn(self: *Self, player: *Player) void {
 /// Breaks the block at `target`: in survival over time while `held` (returning to 0
 /// when the target changes or the button is let go), in creative at once when
 /// `clicked`. Returns whether it broke. `world.setBlock(x, y, z, BlockId) !void`.
-pub fn dig(self: *Self, world: anytype, target: ?raycast.Hit, held: bool, clicked: bool, dt: f32) !bool {
+pub fn dig(self: *Game, world: anytype, target: ?raycast.Hit, held: bool, clicked: bool, dt: f32) !bool {
     const hit = target orelse {
         self.mining = null;
         return false;
@@ -157,14 +157,14 @@ pub fn dig(self: *Self, world: anytype, target: ?raycast.Hit, held: bool, clicke
 }
 
 /// The crack stage (0..`Tile.crack_stages`) of the block being broken, if any.
-pub fn crack(self: *const Self) ?struct { block: [3]i32, stage: usize } {
+pub fn crack(self: *const Game) ?struct { block: [3]i32, stage: usize } {
     const m = self.mining orelse return null;
     return .{ .block = m.block, .stage = @intFromFloat(m.progress * 10) };
 }
 
 /// Places the selected block against the face of `hit`, using one up in survival.
 /// Returns whether it was placed. `world.getBlock(x, y, z) ?BlockId` as well.
-pub fn place(self: *Self, world: anytype, player: *const Player, hit: raycast.Hit) !bool {
+pub fn place(self: *Game, world: anytype, player: *const Player, hit: raycast.Hit) !bool {
     if (std.meta.eql(hit.normal, .{ 0, 0, 0 })) return false;
     const id = self.inventory.held() orelse return false;
     const p = hit.adjacent();
@@ -176,12 +176,12 @@ pub fn place(self: *Self, world: anytype, player: *const Player, hit: raycast.Hi
 }
 
 /// Creative's pick block: the targeted block into the hotbar.
-pub fn pick(self: *Self, hit: raycast.Hit) void {
+pub fn pick(self: *Game, hit: raycast.Hit) void {
     if (self.mode == .creative) self.inventory.pick(hit.id);
 }
 
 /// Throws one of the selected block the way the player looks.
-pub fn throwHeld(self: *Self, player: *const Player, forward: math.Vec3) !void {
+pub fn throwHeld(self: *Game, player: *const Player, forward: math.Vec3) !void {
     const id = (if (self.mode == .survival) self.inventory.takeOne() else self.inventory.held()) orelse return;
     const dir: Pos = @floatCast(forward);
     const from = player.eye(1) - Pos{ 0, 0.3, 0 } + dir * @as(Pos, @splat(0.3));
@@ -224,7 +224,7 @@ fn hitAt(block: [3]i32, id: BlockId) raycast.Hit {
 test "survival: digging takes the block's time, and its drop is picked up" {
     var world: TestWorld = .{};
     defer world.deinit();
-    var game = Self.init(testing.allocator, .{ 0.5, 0, 0.5 });
+    var game = Game.init(testing.allocator, .{ 0.5, 0, 0.5 });
     defer game.deinit();
     var player = Player.init(.{ 0.5, 0, 0.5 });
     const target = hitAt(.{ 1, -1, 0 }, .stone);
@@ -247,7 +247,7 @@ test "survival: digging takes the block's time, and its drop is picked up" {
 test "survival: bedrock never breaks" {
     var world: TestWorld = .{};
     defer world.deinit();
-    var game = Self.init(testing.allocator, .{ 0.5, 0, 0.5 });
+    var game = Game.init(testing.allocator, .{ 0.5, 0, 0.5 });
     defer game.deinit();
     try world.setBlock(1, -1, 0, .bedrock);
     const target = hitAt(.{ 1, -1, 0 }, .bedrock);
@@ -258,7 +258,7 @@ test "survival: bedrock never breaks" {
 test "survival: letting go or looking away starts over" {
     var world: TestWorld = .{};
     defer world.deinit();
-    var game = Self.init(testing.allocator, .{ 0.5, 0, 0.5 });
+    var game = Game.init(testing.allocator, .{ 0.5, 0, 0.5 });
     defer game.deinit();
     _ = try game.dig(&world, hitAt(.{ 0, -1, 0 }, .stone), true, false, 1);
     try testing.expect(game.crack().?.stage > 0);
@@ -271,7 +271,7 @@ test "survival: letting go or looking away starts over" {
 test "creative: breaks on click, drops nothing, places without using up" {
     var world: TestWorld = .{};
     defer world.deinit();
-    var game = Self.init(testing.allocator, .{ 0.5, 0, 0.5 });
+    var game = Game.init(testing.allocator, .{ 0.5, 0, 0.5 });
     defer game.deinit();
     var player = Player.init(.{ 0.5, 0, 0.5 });
     game.setMode(.creative, &player);
@@ -289,7 +289,7 @@ test "creative: breaks on click, drops nothing, places without using up" {
 test "survival: placing uses up blocks, and not inside the player" {
     var world: TestWorld = .{};
     defer world.deinit();
-    var game = Self.init(testing.allocator, .{ 0.5, 0, 0.5 });
+    var game = Game.init(testing.allocator, .{ 0.5, 0, 0.5 });
     defer game.deinit();
     const player = Player.init(.{ 0.5, 0, 0.5 });
     try testing.expect(!try game.place(&world, &player, hitAt(.{ 3, -1, 0 }, .stone)));
@@ -303,7 +303,7 @@ test "survival: placing uses up blocks, and not inside the player" {
 test "falls hurt in survival only; dying respawns with full health" {
     var world: TestWorld = .{};
     defer world.deinit();
-    var game = Self.init(testing.allocator, .{ 0.5, 0, 0.5 });
+    var game = Game.init(testing.allocator, .{ 0.5, 0, 0.5 });
     defer game.deinit();
     var player = Player.init(.{ 0.5, 10, 0.5 });
     for (0..120) |_| {
@@ -335,7 +335,7 @@ test "falls hurt in survival only; dying respawns with full health" {
 test "heals over time in survival" {
     var world: TestWorld = .{};
     defer world.deinit();
-    var game = Self.init(testing.allocator, .{ 0.5, 0, 0.5 });
+    var game = Game.init(testing.allocator, .{ 0.5, 0, 0.5 });
     defer game.deinit();
     var player = Player.init(.{ 0.5, 0, 0.5 });
     game.hurt(3);

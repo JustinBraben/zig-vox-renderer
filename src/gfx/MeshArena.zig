@@ -8,24 +8,24 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const VulkanContext = @import("vulkan_context.zig");
+const VulkanContext = @import("VulkanContext.zig");
 const vk = VulkanContext.vk;
 const VkMemory = @import("dvui_vulkan_renderer").VkMemory;
-const Buffer = @import("buffer.zig");
-const mesher = @import("../world/mesher.zig");
-const chunk = @import("../world/chunk.zig");
+const Buffer = @import("Buffer.zig");
+const mesher = @import("../world.zig").mesher;
+const Chunk = @import("../world.zig").Chunk;
 
 pub const Vertex = mesher.Vertex;
-pub const Range = chunk.MeshRange;
+pub const Range = Chunk.MeshRange;
 
 /// Worst case for a 32³ chunk is a 3D checkerboard: half the blocks with 6 open faces.
-pub const max_quads_per_chunk = chunk.volume / 2 * 6;
+pub const max_quads_per_chunk = Chunk.volume / 2 * 6;
 
 /// Vertices one frame can upload (16 MiB of staging per frame in flight); more than
 /// the worst-case chunk.
 pub const staging_vertices = 2 * 1024 * 1024;
 
-const Self = @This();
+const MeshArena = @This();
 
 allocator: Allocator,
 device: vk.DeviceProxy,
@@ -54,7 +54,7 @@ const Staging = struct {
     copies: std.ArrayList(vk.BufferCopy) = .empty,
 };
 
-pub fn init(allocator: Allocator, device: vk.DeviceProxy, memory: VkMemory, vertex_capacity: u32, frames_in_flight: u64) !Self {
+pub fn init(allocator: Allocator, device: vk.DeviceProxy, memory: VkMemory, vertex_capacity: u32, frames_in_flight: u64) !MeshArena {
     var vertices = try Buffer.init(device, memory, @as(vk.DeviceSize, vertex_capacity) * @sizeOf(Vertex), .{ .vertex_buffer_bit = true, .transfer_dst_bit = true }, .device_local);
     errdefer vertices.deinit();
 
@@ -74,7 +74,7 @@ pub fn init(allocator: Allocator, device: vk.DeviceProxy, memory: VkMemory, vert
         quad.* = .{ base, base + 1, base + 2, base + 2, base + 3, base };
     }
 
-    var self: Self = .{
+    var self: MeshArena = .{
         .allocator = allocator,
         .device = device,
         .vertices = vertices,
@@ -87,7 +87,7 @@ pub fn init(allocator: Allocator, device: vk.DeviceProxy, memory: VkMemory, vert
     return self;
 }
 
-pub fn deinit(self: *Self) void {
+pub fn deinit(self: *MeshArena) void {
     self.free_list.deinit(self.allocator);
     self.pending.deinit(self.allocator);
     for (self.staging) |*s| {
@@ -100,13 +100,13 @@ pub fn deinit(self: *Self) void {
 }
 
 /// Whether this frame can still upload `count` more vertices.
-pub fn canStage(self: *const Self, count: usize) bool {
+pub fn canStage(self: *const MeshArena, count: usize) bool {
     return self.staging[self.slot].used + count <= staging_vertices;
 }
 
 /// Allocates a range for `data` and stages it to be copied there by `recordUploads`
 /// (`canStage` must allow it). Returns null when the arena is full.
-pub fn upload(self: *Self, data: []const Vertex) !?Range {
+pub fn upload(self: *MeshArena, data: []const Vertex) !?Range {
     std.debug.assert(data.len > 0 and data.len <= max_quads_per_chunk * 4);
     std.debug.assert(self.canStage(data.len));
     const count: u32 = @intCast(data.len);
@@ -132,7 +132,7 @@ pub fn upload(self: *Self, data: []const Vertex) !?Range {
 }
 
 /// Records the copies of this frame's uploads into place, before anything draws.
-pub fn recordUploads(self: *Self, cmd: vk.CommandBuffer) void {
+pub fn recordUploads(self: *MeshArena, cmd: vk.CommandBuffer) void {
     const s = &self.staging[self.slot];
     if (s.copies.items.len == 0) return;
     self.device.cmdCopyBuffer(cmd, s.buffer.handle, self.vertices.handle, s.copies.items);
@@ -149,13 +149,13 @@ pub fn recordUploads(self: *Self, cmd: vk.CommandBuffer) void {
 }
 
 /// Releases `range` once `frame` and every earlier frame have completed.
-pub fn free(self: *Self, range: Range, frame: u64) !void {
+pub fn free(self: *MeshArena, range: Range, frame: u64) !void {
     try self.pending.append(self.allocator, .{ .range = range, .frame = frame });
 }
 
 /// Call after waiting on the fence for `frame`'s slot; returns ranges that the GPU is
 /// done with, and starts the frame's uploads.
-pub fn retire(self: *Self, frame: u64) !void {
+pub fn retire(self: *MeshArena, frame: u64) !void {
     self.slot = @intCast(frame % self.frames_in_flight);
     // copied by the frame that last used this slot, which has finished
     std.debug.assert(self.staging[self.slot].copies.items.len == 0);
@@ -173,12 +173,12 @@ pub fn retire(self: *Self, frame: u64) !void {
 }
 
 /// Releases every pending range immediately; only valid while the GPU is idle.
-pub fn retireAll(self: *Self) !void {
+pub fn retireAll(self: *MeshArena) !void {
     for (self.pending.items) |p| try self.release(p.range);
     self.pending.clearRetainingCapacity();
 }
 
-fn release(self: *Self, range: Range) !void {
+fn release(self: *MeshArena, range: Range) !void {
     self.used -= range.count;
     const items = self.free_list.items;
     // first free range that starts after this one

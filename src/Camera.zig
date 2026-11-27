@@ -7,7 +7,7 @@ const math = @import("math.zig");
 const Vec3 = math.Vec3;
 const Mat4 = math.Mat4;
 
-const Self = @This();
+const Camera = @This();
 
 pub const world_up: Vec3 = .{ 0, 1, 0 };
 pub const near_plane = 0.05;
@@ -18,22 +18,22 @@ yaw: f32 = 30,
 /// degrees, clamped to +-89
 pitch: f32 = -20,
 
-pub fn forward(self: Self) Vec3 {
+pub fn forward(self: Camera) Vec3 {
     return math.fromDirection(self.yaw, self.pitch);
 }
 
-pub fn right(self: Self) Vec3 {
+pub fn right(self: Camera) Vec3 {
     return math.normalize(math.cross(self.forward(), world_up));
 }
 
 /// Applies a mouse delta (in pixels).
-pub fn look(self: *Self, dx: f32, dy: f32, sensitivity: f32) void {
+pub fn look(self: *Camera, dx: f32, dy: f32, sensitivity: f32) void {
     self.yaw = @mod(self.yaw + dx * sensitivity, 360);
     self.pitch = std.math.clamp(self.pitch - dy * sensitivity, -89, 89);
 }
 
 /// View matrix with the camera at the origin (camera-relative rendering).
-pub fn view(self: Self) Mat4 {
+pub fn view(self: Camera) Mat4 {
     return Mat4.lookTo(.{ 0, 0, 0 }, self.forward(), world_up);
 }
 
@@ -42,6 +42,6 @@ pub fn projection(fov_deg: f32, aspect: f32) Mat4 {
 }
 
 /// `p` relative to the camera, in f32.
-pub fn relative(self: Self, p: @Vector(3, f64)) Vec3 {
+pub fn relative(self: Camera, p: @Vector(3, f64)) Vec3 {
     return @floatCast(p - self.position);
 }

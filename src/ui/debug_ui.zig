@@ -3,15 +3,15 @@
 const std = @import("std");
 const dvui = @import("dvui");
 
-const Settings = @import("../settings.zig").Settings;
-const Camera = @import("../camera.zig");
-const World = @import("../world/world.zig");
-const Lod = @import("../world/lod.zig");
-const ChunkPos = @import("../world/chunk.zig").ChunkPos;
-const BlockId = @import("../world/block.zig").BlockId;
-const raycast = @import("../world/raycast.zig");
-const Player = @import("../player.zig");
-const Game = @import("../game/game.zig");
+const Settings = @import("../Settings.zig");
+const Camera = @import("../Camera.zig");
+const World = @import("../world.zig").World;
+const Lod = @import("../world.zig").Lod;
+const Chunk = @import("../world.zig").Chunk;
+const BlockId = @import("../world.zig").BlockId;
+const raycast = @import("../world.zig").raycast;
+const Player = @import("../Player.zig");
+const Game = @import("../game.zig").Game;
 
 pub const Stats = struct {
     frame_ms: f32,
@@ -53,7 +53,7 @@ pub fn draw(settings: *Settings, player: *Player, game: *Game, stats: Stats) Act
         const fps = if (stats.frame_ms > 0) 1000.0 / stats.frame_ms else 0;
         dvui.label(@src(), "{d:.2} ms ({d:.0} fps)", .{ stats.frame_ms, fps }, .{});
         const p = stats.camera.position;
-        const cp = ChunkPos.fromWorld(p);
+        const cp = Chunk.Pos.fromWorld(p);
         dvui.label(@src(), "pos {d:.1} {d:.1} {d:.1}", .{ p[0], p[1], p[2] }, .{});
         dvui.label(@src(), "chunk {d} {d} {d}", .{ cp.x, cp.y, cp.z }, .{});
         const w = stats.world;
