@@ -14,3 +14,7 @@ pub const light = @import("world/light.zig");
 pub const mesher = @import("world/mesher.zig");
 pub const raycast = @import("world/raycast.zig");
 pub const worms = @import("world/worms.zig");
+
+test {
+    @import("std").testing.refAllDecls(@This());
+}

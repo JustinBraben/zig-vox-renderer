@@ -4,3 +4,7 @@
 pub const Game = @import("game/Game.zig");
 pub const Inventory = @import("game/Inventory.zig");
 pub const Items = @import("game/Items.zig");
+
+test {
+    @import("std").testing.refAllDecls(@This());
+}
